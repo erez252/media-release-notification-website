@@ -84,6 +84,7 @@ function refreshListViews() {
   applyFiltersAndSort();
   if (calendarLoaded) renderCalendar();
   if (recsLoaded) renderRecommendations();
+  if (discoverReady) renderDiscover();
 }
 
 /** Apply the type filter to every rendered view. */
@@ -93,6 +94,7 @@ function applyTypeFilterEverywhere() {
     renderSearchResults(lastSearchResults.movies, lastSearchResults.tvShows, lastSearchResults.games);
   }
   refreshListViews();
+  onDiscoverTypesChanged();
 }
 
 document.querySelectorAll('.search-type-pills .pill').forEach(btn => {
@@ -267,6 +269,28 @@ function handleLogout() {
   hide(recommendationsLoading);
   clearError(recommendationsError);
   recSortSelect.value = 'score';
+  // Reset discover view
+  DISC_TYPES.forEach(t => { discPaging[t] = { page: 1, exhausted: false }; });
+  discItems     = [];
+  discRendered  = 0;
+  discCategory  = 'popular';
+  discGenre     = 'all';
+  discSort      = '';
+  discEx        = { reality: true, talk: true, news: true };
+  discoverReady = false;
+  discoverBusy  = false;
+  discoverGrid.innerHTML = '';
+  discoverCount.textContent = '0';
+  discYearInput.value = '';
+  discExReality.checked = true;
+  discExTalk.checked    = true;
+  discExNews.checked    = true;
+  hide(discoverGrid);
+  hide(discoverEmpty);
+  hide(discoverFooter);
+  hide(discoverEnd);
+  hide(discoverLoading);
+  clearError(discoverError);
   switchView('watchlist');
 }
 
@@ -2507,12 +2531,14 @@ function switchView(view) {
   viewToggleBtns.forEach(b => b.classList.toggle('active', b.dataset.view === view));
   const isCalendar = view === 'calendar';
   const isRecs     = view === 'recommendations';
+  const isDisc     = view === 'discover';
 
-  watchlistSection.classList.toggle('hidden', isCalendar || isRecs);
+  watchlistSection.classList.toggle('hidden', isCalendar || isRecs || isDisc);
 
   hide(searchSection);
   hide(calendarSection);
   hide(recommendationsSection);
+  hide(discoverSection);
 
   if (isCalendar) {
     show(calendarSection);
@@ -2522,6 +2548,10 @@ function switchView(view) {
     show(recommendationsSection);
     if (recsLoaded) renderRecommendations();
     else loadRecommendations();
+  } else if (isDisc) {
+    show(discoverSection);
+    syncDiscoverControls();
+    if (!discoverReady) loadDiscover();
   }
 }
 
@@ -3070,7 +3100,7 @@ function renderRecommendations() {
 
 function buildRecommendationCard(item) {
   const isGame = item.media_type === 'game';
-  const genres = (item.genres || []).slice(0, 3).map(g => g.name);
+  const genres = (item.genres || []).slice(0, 3).map(g => (typeof g === 'string' ? g : g.name));
   const year   = item.release_date ? String(item.release_date).slice(0, 4) : null;
   const vote   = recVote(item);
 
@@ -3176,6 +3206,410 @@ recSortSelect.addEventListener('change', () => {
   recSort = recSortSelect.value;
   renderRecommendations();
 });
+
+// ─────────────────────────────────────────────────────────────
+// Discover — merged feed from /discaver/get/<media_type>
+// ─────────────────────────────────────────────────────────────
+
+const discoverSection  = $('discover-section');
+const discoverError    = $('discover-error');
+const discoverLoading  = $('discover-loading');
+const discoverGrid     = $('discover-grid');
+const discoverCount    = $('discover-count');
+const discoverEmpty    = $('discover-empty');
+const discoverFooter   = $('discover-footer');
+const discoverEnd      = $('discover-end');
+const discoverSentinel = $('discover-sentinel');
+const discoverMoreBtn  = $('discover-more-btn');
+const discCategories   = $('disc-categories');
+const discGenreSel     = $('disc-genre');
+const discYearInput    = $('disc-year');
+const discSortSel      = $('disc-sort');
+const discTvFilters    = $('disc-tv-filters');
+const discExReality    = $('disc-ex-reality');
+const discExTalk       = $('disc-ex-talk');
+const discExNews       = $('disc-ex-news');
+
+const DISC_TYPES = ['movie', 'tv', 'game'];
+
+/** search_type values each media type accepts */
+const DISC_CATEGORIES = {
+  movie: ['popular', 'upcoming', 'anticipated', 'new'],
+  tv:    ['popular', 'upcoming', 'anticipated', 'new', 'airing'],
+  game:  ['popular', 'upcoming', 'anticipated', 'new'],
+};
+
+/** Genre IDs accepted by the endpoint, per media type (from the API doc) */
+const DISC_GENRES = {
+  movie: [
+    [28, 'Action'], [12, 'Adventure'], [16, 'Animation'], [35, 'Comedy'], [80, 'Crime'],
+    [99, 'Documentary'], [18, 'Drama'], [10751, 'Family'], [14, 'Fantasy'], [36, 'History'],
+    [27, 'Horror'], [10402, 'Music'], [9648, 'Mystery'], [10749, 'Romance'],
+    [878, 'Science Fiction'], [10770, 'TV Movie'], [53, 'Thriller'], [10752, 'War'], [37, 'Western'],
+  ],
+  tv: [
+    [10759, 'Action & Adventure'], [16, 'Animation'], [35, 'Comedy'], [80, 'Crime'],
+    [99, 'Documentary'], [18, 'Drama'], [10751, 'Family'], [10762, 'Kids'], [9648, 'Mystery'],
+    [10763, 'News'], [10764, 'Reality'], [10765, 'Sci-Fi & Fantasy'], [10766, 'Soap'],
+    [10767, 'Talk'], [10768, 'War & Politics'], [37, 'Western'],
+  ],
+  game: [
+    [2, 'Point-and-click'], [4, 'Fighting'], [5, 'Shooter'], [7, 'Music'], [8, 'Platform'],
+    [9, 'Puzzle'], [10, 'Racing'], [11, 'Real Time Strategy (RTS)'], [12, 'Role-playing (RPG)'],
+    [13, 'Simulator'], [14, 'Sport'], [15, 'Strategy'], [16, 'Turn-based strategy (TBS)'],
+    [24, 'Tactical'], [25, "Hack and slash/Beat 'em up"], [26, 'Quiz/Trivia'], [30, 'Pinball'],
+    [31, 'Adventure'], [32, 'Indie'], [33, 'Arcade'], [34, 'Visual Novel'], [35, 'Card & Board Game'],
+  ],
+};
+
+/** Sort values the endpoint accepts for movies / TV shows */
+const DISC_SORTS = {
+  movie: [
+    ['popularity.desc', 'Popularity \u2193'], ['popularity.asc', 'Popularity \u2191'],
+    ['vote_average.desc', 'Rating \u2193'],   ['vote_average.asc', 'Rating \u2191'],
+    ['vote_count.desc', 'Votes \u2193'],      ['vote_count.asc', 'Votes \u2191'],
+    ['primary_release_date.desc', 'Release Date \u2193'], ['primary_release_date.asc', 'Release Date \u2191'],
+    ['title.asc', 'Title A\u2013Z'],          ['title.desc', 'Title Z\u2013A'],
+    ['original_title.asc', 'Original Title A\u2013Z'], ['revenue.desc', 'Revenue \u2193'],
+  ],
+  tv: [
+    ['popularity.desc', 'Popularity \u2193'], ['popularity.asc', 'Popularity \u2191'],
+    ['vote_average.desc', 'Rating \u2193'],   ['vote_average.asc', 'Rating \u2191'],
+    ['vote_count.desc', 'Votes \u2193'],      ['vote_count.asc', 'Votes \u2191'],
+    ['first_air_date.desc', 'First Air Date \u2193'], ['first_air_date.asc', 'First Air Date \u2191'],
+    ['name.asc', 'Name A\u2013Z'],            ['name.desc', 'Name Z\u2013A'],
+    ['original_name.asc', 'Original Name A\u2013Z'],
+  ],
+};
+
+// Discover state. Paging is tracked per media type because the endpoint is
+// one-request-per-type and reports "has more" differently for games.
+const discPaging = {
+  movie: { page: 1, exhausted: false },
+  tv:    { page: 1, exhausted: false },
+  game:  { page: 1, exhausted: false },
+};
+let discItems     = [];      // accumulated items, each tagged with media_type
+let discRendered  = 0;       // how many of the filtered items are already in the DOM
+let discCategory  = 'popular';
+let discGenre     = 'all';
+let discSort      = '';
+let discEx        = { reality: true, talk: true, news: true };
+let discoverReady = false;   // has a page been loaded successfully?
+let discoverBusy  = false;   // a page request is in flight
+
+/** Media types currently picked in the global pills, in a stable order. */
+function discActiveTypes() {
+  return DISC_TYPES.filter(t => matchesActiveTypes(t));
+}
+
+/** search_type values supported by every currently active media type. */
+function discAvailableCategories(types) {
+  const base = DISC_CATEGORIES[types[0]] || [];
+  return base.filter(c => types.every(t => DISC_CATEGORIES[t].includes(c)));
+}
+
+/** Rebuild the genre dropdown for one media type, keeping the current pick when valid. */
+function buildDiscGenreOptions(mediaType) {
+  const prev = discGenre;
+  discGenreSel.innerHTML = '<option value="all">All Genres</option>';
+  DISC_GENRES[mediaType].forEach(([id, name]) => {
+    const opt = document.createElement('option');
+    opt.value       = String(id);
+    opt.textContent = name;
+    discGenreSel.appendChild(opt);
+  });
+  discGenreSel.value = [...discGenreSel.options].some(o => o.value === prev) ? prev : 'all';
+  return discGenreSel.value;
+}
+
+/** Rebuild the sort dropdown with the values shared by the active movie/TV types. */
+function buildDiscSortOptions(types) {
+  const prev  = discSort;
+  const video = types.filter(t => t === 'movie' || t === 'tv');
+  discSortSel.innerHTML = '<option value="">Default</option>';
+
+  if (video.length) {
+    const shared = DISC_SORTS[video[0]]
+      .filter(([val]) => video.every(t => DISC_SORTS[t].some(([v]) => v === val)));
+    shared.forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value       = val;
+      opt.textContent = label;
+      discSortSel.appendChild(opt);
+    });
+  }
+
+  discSortSel.value = [...discSortSel.options].some(o => o.value === prev) ? prev : '';
+  return discSortSel.value;
+}
+
+/**
+ * Show/hide the discover controls for the current media-type selection and rebuild
+ * the option lists. Returns true when a query filter had to be reset (caller refetches).
+ */
+function syncDiscoverControls() {
+  const types    = discActiveTypes();
+  const hasTV    = types.includes('tv');
+  let changed = false;
+
+  // Category chips — only the search_type values every active type supports
+  const available = discAvailableCategories(types);
+  if (!available.includes(discCategory)) {
+    discCategory = available[0] || 'popular';
+    changed = true;
+  }
+  discCategories.querySelectorAll('[data-disc-cat]').forEach(btn => {
+    const cat = btn.dataset.discCat;
+    btn.classList.toggle('hidden', !available.includes(cat));
+    btn.classList.toggle('active', cat === discCategory);
+  });
+
+  // Genre — IDs are not comparable across media types, so only offer it for a single type
+  const singleType = types.length === 1 ? types[0] : null;
+  discGenreSel.classList.toggle('hidden', !singleType);
+  if (singleType) {
+    const resolved = buildDiscGenreOptions(singleType);
+    if (resolved !== discGenre) { discGenre = resolved; changed = true; }
+  } else if (discGenre !== 'all') {
+    discGenre = 'all';
+    discGenreSel.value = 'all';
+    changed = true;
+  }
+
+  // Year + sort exist for movies and TV only, so they are offered only when the
+  // selection is movies/TV alone — with games in the mix they would apply to part
+  // of the feed and be silently ignored by the rest.
+  const videoOnly = types.length > 0 && types.every(t => t === 'movie' || t === 'tv');
+  discYearInput.classList.toggle('hidden', !videoOnly);
+  discSortSel.classList.toggle('hidden', !videoOnly);
+  if (videoOnly) {
+    const resolved = buildDiscSortOptions(types);
+    if (resolved !== discSort) { discSort = resolved; changed = true; }
+  } else {
+    if (discSort) { discSort = ''; discSortSel.value = ''; changed = true; }
+    if (discYearInput.value) { discYearInput.value = ''; changed = true; }
+  }
+
+  // TV-only content filters
+  discTvFilters.classList.toggle('hidden', !hasTV);
+
+  return changed;
+}
+
+/** Fetch a single discover page for one media type. */
+async function fetchDiscoverPage(mediaType, page) {
+  const params = new URLSearchParams();
+  params.set('search_type', discCategory);
+  params.set('page', String(page));
+  if (discGenre !== 'all' && discActiveTypes().length === 1) params.set('genre', discGenre);
+  if (mediaType === 'movie' || mediaType === 'tv') {
+    const year = discYearInput.value.trim();
+    if (year) params.set('year', year);
+    if (discSort) params.set('sort', discSort);
+  }
+  if (mediaType === 'tv') {
+    params.set('exclude_reality', String(discEx.reality));
+    params.set('exclude_talk',    String(discEx.talk));
+    params.set('exclude_news',    String(discEx.news));
+  }
+
+  let ok = false, status = 0, data = null;
+  try {
+    const res = await fetch(`${API}/discaver/get/${mediaType}?${params.toString()}`, {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${currentPassword}`,
+        'Content-Type':  'application/json',
+      },
+    });
+    ok     = res.ok;
+    status = res.status;
+    try { data = await res.json(); } catch (_) { /* empty body */ }
+  } catch (_) { ok = false; }
+
+  return { ok, status, data };
+}
+
+/** Discover items that pass the global type pills + the live search box. */
+function filteredDiscItems() {
+  const q = currentQuery();
+  return discItems.filter(i => {
+    if (!matchesActiveTypes(i.media_type)) return false;
+    if (q && !String(i.title || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+/** Draw the end-of-feed state once nothing else can be fetched. */
+function finishDiscover() {
+  if (!discItems.length) {
+    hide(discoverFooter);
+    return;
+  }
+  const more = discActiveTypes().some(t => !discPaging[t].exhausted);
+  show(discoverFooter);
+  discoverMoreBtn.classList.toggle('hidden', !more);
+  discoverEnd.classList.toggle('hidden', more);
+}
+
+/** Load one more page for every active media type and append the merged results. */
+async function loadDiscoverMore() {
+  if (discoverBusy) return;
+
+  const types = discActiveTypes().filter(t => !discPaging[t].exhausted);
+  if (!types.length) { finishDiscover(); return; }
+
+  discoverBusy = true;
+  hide(discoverEnd);
+  show(discoverFooter);
+  setBtnLoading(discoverMoreBtn, true);
+
+  const batches = await Promise.all(types.map(async mediaType => {
+    const page = discPaging[mediaType].page;
+    const { ok, status, data } = await fetchDiscoverPage(mediaType, page);
+    if (!ok) return { mediaType, status, items: [], failed: true };
+
+    const results = Array.isArray(data?.results) ? data.results : [];
+    // Tag every item — the endpoint does not tell us which type it came from
+    const items = results.map(i => ({ ...i, media_type: mediaType }));
+
+    // Games report has_more; movies and TV report total_pages
+    discPaging[mediaType].exhausted = mediaType === 'game'
+      ? (!data?.has_more || !results.length)
+      : (results.length === 0 || page >= (Number(data?.total_pages) || 1));
+    discPaging[mediaType].page = page + 1;
+
+    return { mediaType, items };
+  }));
+
+  discoverBusy = false;
+  setBtnLoading(discoverMoreBtn, false);
+  hide(discoverLoading);
+
+  const failed = batches.filter(b => b.failed);
+  if (failed.length === batches.length) {
+    showError(discoverError, failed[0].status === 401
+      ? 'Session expired. Please re-login.'
+      : 'Could not load discover. Please try again.');
+    hide(discoverFooter);
+    return;
+  }
+
+  discoverReady = true;
+
+  // Order the new batch by popularity so multiple media types interleave
+  const batch = batches.flatMap(b => b.items)
+                       .sort((a, b) => (Number(b.popularity) || 0) - (Number(a.popularity) || 0));
+  discItems.push(...batch);
+
+  renderDiscover({ append: true });
+  finishDiscover();
+}
+
+/** Reset the feed and load the first page. */
+async function loadDiscover() {
+  clearError(discoverError);
+  DISC_TYPES.forEach(t => { discPaging[t] = { page: 1, exhausted: false }; });
+  discItems     = [];
+  discRendered  = 0;
+  discoverReady = false;
+  discoverGrid.innerHTML = '';
+  hide(discoverGrid);
+  hide(discoverEmpty);
+  hide(discoverFooter);
+  hide(discoverEnd);
+  show(discoverLoading);
+  await loadDiscoverMore();
+}
+
+/** Render (or extend) the discover grid from the accumulated items. */
+function renderDiscover({ append = false } = {}) {
+  const items = filteredDiscItems();
+  discoverCount.textContent = items.length;
+
+  if (!items.length) {
+    discoverGrid.innerHTML = '';
+    discRendered = 0;
+    hide(discoverGrid);
+    discoverEmpty.textContent = discItems.length
+      ? 'No titles match your filter.'
+      : 'Nothing to discover here.';
+    show(discoverEmpty);
+    return;
+  }
+
+  hide(discoverEmpty);
+
+  // Only the tail needs drawing when appending to an unchanged filter
+  if (!append || discRendered > items.length) {
+    discoverGrid.innerHTML = '';
+    discRendered = 0;
+  }
+  for (let i = discRendered; i < items.length; i++) {
+    discoverGrid.appendChild(buildRecommendationCard(items[i]));
+  }
+  discRendered = items.length;
+  show(discoverGrid);
+}
+
+/** Fetch a page for any newly picked media type that has no data yet. */
+function ensureDiscoverTypes() {
+  const needsFetch = discActiveTypes()
+    .some(t => !discPaging[t].exhausted && !discItems.some(i => i.media_type === t));
+  if (needsFetch) loadDiscoverMore();
+}
+
+/** React to a global media-type pill change while Discover is open. */
+function onDiscoverTypesChanged() {
+  if (!discoverReady) return;
+  if (syncDiscoverControls()) { loadDiscover(); return; }
+  ensureDiscoverTypes();
+  renderDiscover();
+}
+
+// Discover controls — every change refetches from the first page
+discCategories.querySelectorAll('[data-disc-cat]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    discCategory = btn.dataset.discCat;
+    syncDiscoverControls();
+    loadDiscover();
+  });
+});
+
+discGenreSel.addEventListener('change', () => {
+  discGenre = discGenreSel.value;
+  loadDiscover();
+});
+
+discSortSel.addEventListener('change', () => {
+  discSort = discSortSel.value;
+  loadDiscover();
+});
+
+let discYearTimer = null;
+discYearInput.addEventListener('input', () => {
+  clearTimeout(discYearTimer);
+  discYearTimer = setTimeout(loadDiscover, 450);
+});
+
+[[discExReality, 'reality'], [discExTalk, 'talk'], [discExNews, 'news']].forEach(([el, key]) => {
+  el.addEventListener('change', () => {
+    discEx[key] = el.checked;
+    loadDiscover();
+  });
+});
+
+discoverMoreBtn.addEventListener('click', loadDiscoverMore);
+
+// Endless scrolling — pull the next page while the sentinel is near the viewport
+const discObserver = new IntersectionObserver(entries => {
+  if (!entries.some(e => e.isIntersecting)) return;
+  if (!discoverReady || discoverBusy) return;
+  if (discoverSection.classList.contains('hidden')) return;
+  loadDiscoverMore();
+}, { rootMargin: '400px 0px' });
+discObserver.observe(discoverSentinel);
 
 // ─────────────────────────────────────────────────────────────
 // Auto-login with the saved password (skip the overlay on return visits)

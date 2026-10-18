@@ -54,7 +54,14 @@
           <button class="pill active" data-view="watchlist">Watchlist</button>
           <button class="pill" data-view="calendar">Calendar</button>
           <button class="pill" data-view="recommendations">Recommendations</button>
+          <button class="pill" data-view="discover">Discover</button>
         </div>
+
+        <button id="logout-btn" class="btn btn-ghost logout-btn" title="Lock watchlist" aria-label="Lock watchlist">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M17 11V7a5 5 0 00-10 0v4M5 11h14a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7a2 2 0 012-2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
 
         <!-- Global search / filter bar -->
         <div class="search-bar" role="search">
@@ -82,12 +89,6 @@
             <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
           </button>
         </div>
-
-        <button id="logout-btn" class="btn btn-ghost" title="Lock watchlist" aria-label="Lock watchlist">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M17 11V7a5 5 0 00-10 0v4M5 11h14a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7a2 2 0 012-2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
       </div>
     </header>
 
@@ -281,6 +282,81 @@
         <div id="recommendations-grid" class="recommendations-grid hidden" role="list"></div>
 
         <p id="recommendations-empty" class="empty-state hidden">No recommendations yet.</p>
+      </section>
+
+      <!-- Discover Section -->
+      <section id="discover-section" class="discover-section hidden" aria-label="Discover">
+        <div class="discover-header">
+          <div class="discover-title-row">
+            <h2 class="section-title">
+              Discover
+              <span id="discover-count" class="count-badge">0</span>
+            </h2>
+
+            <div class="discover-controls">
+              <input
+                type="number"
+                id="disc-year"
+                class="filter-select disc-year"
+                placeholder="Year"
+                min="1900"
+                max="2100"
+                aria-label="Filter by release year"
+              />
+              <select id="disc-genre" class="filter-select" aria-label="Filter by genre">
+                <option value="all">All Genres</option>
+              </select>
+              <select id="disc-sort" class="filter-select" aria-label="Sort by">
+                <option value="">Default</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Discover category (search_type) -->
+          <div id="disc-categories" class="disc-categories" role="group" aria-label="Discover category">
+            <button class="pill active" data-disc-cat="popular">Popular</button>
+            <button class="pill" data-disc-cat="upcoming">Upcoming</button>
+            <button class="pill" data-disc-cat="anticipated">Anticipated</button>
+            <button class="pill" data-disc-cat="new">New</button>
+            <button class="pill hidden" data-disc-cat="airing">Airing</button>
+          </div>
+
+          <!-- TV-only content filters (the API defaults to hiding all three) -->
+          <div id="disc-tv-filters" class="disc-tv-filters hidden">
+            <label class="disc-check">
+              <input type="checkbox" id="disc-ex-reality" checked />
+              <span>Hide Reality</span>
+            </label>
+            <label class="disc-check">
+              <input type="checkbox" id="disc-ex-talk" checked />
+              <span>Hide Talk</span>
+            </label>
+            <label class="disc-check">
+              <input type="checkbox" id="disc-ex-news" checked />
+              <span>Hide News</span>
+            </label>
+          </div>
+        </div>
+
+        <p id="discover-error" class="error-msg hidden" role="alert"></p>
+
+        <div id="discover-loading" class="loading-state hidden">
+          <div class="spinner spinner-lg" aria-hidden="true"></div>
+          <p>Loading discover&hellip;</p>
+        </div>
+
+        <div id="discover-grid" class="discover-grid hidden" role="list"></div>
+
+        <div id="discover-footer" class="discover-footer hidden">
+          <button id="discover-more-btn" class="btn btn-secondary">
+            <span class="btn-text">Load more</span>
+            <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
+          </button>
+          <div id="discover-sentinel" class="discover-sentinel" aria-hidden="true"></div>
+          <p id="discover-end" class="discover-end hidden">You&rsquo;ve reached the end.</p>
+        </div>
+
+        <p id="discover-empty" class="empty-state hidden">Nothing to discover here.</p>
       </section>
 
     </main>
