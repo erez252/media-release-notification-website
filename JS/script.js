@@ -55,9 +55,36 @@ const detailError     = $('detail-error');
 const detailContent   = $('detail-content');
 const detailCloseBtn  = $('detail-close-btn');
 
+// Back to top
+const backToTopBtn    = $('back-to-top');
+
+// Watchlist bulk select
+const selectBtn       = $('watchlist-select-btn');
+const bulkBar         = $('bulk-bar');
+const bulkCount       = $('bulk-count');
+const bulkNotifOn     = $('bulk-notif-on');
+const bulkNotifOff    = $('bulk-notif-off');
+const bulkRemoveBtn   = $('bulk-remove');
+const bulkCancelBtn   = $('bulk-cancel');
+const bulkStatus      = $('bulk-status');
+const bulkStatusText  = $('bulk-status-text');
+
+// Calendar day drawer
+const calDayDrawer         = $('cal-day-drawer');
+const calDayDrawerBackdrop = $('cal-day-drawer-backdrop');
+const calDayDrawerClose    = $('cal-day-drawer-close');
+const calDayDrawerTitle    = $('cal-day-drawer-title');
+const calDayDrawerSub      = $('cal-day-drawer-sub');
+const calDayDrawerList     = $('cal-day-drawer-list');
+
 // Global media-type filter (multi-select). Empty set = every type.
 const activeTypes = new Set(); // subset of { 'movie', 'tv', 'game' }
 let lastSearchResults = null; // { movies: [], tvShows: [], games: [] } — cached from last API call
+
+// Watchlist bulk-select state
+let selectMode = false;          // multi-select mode on the watchlist
+const selectedKeys = new Set();  // `${mediaType}:${id}` for every selected card
+const BULK_STEP_DELAY = 500;     // ms between requests — the backend has no bulk endpoint
 
 /** Does a media_type pass the current type filter? */
 function matchesActiveTypes(mediaType) {
@@ -226,6 +253,9 @@ async function handleLogin() {
   show(app);
   populateGenreFilter();
   applyFiltersAndSort();
+  syncBackToTop();
+  // A shared link like #movie/550 opens straight into that detail
+  applyInitialDetailHash();
 }
 
 function handleLogout() {
@@ -291,6 +321,19 @@ function handleLogout() {
   hide(discoverEnd);
   hide(discoverLoading);
   clearError(discoverError);
+  // Reset bulk-select mode
+  selectMode = false;
+  selectedKeys.clear();
+  bulkBar.classList.add('hidden');
+  hide(bulkStatus);
+  document.body.classList.remove('bulk-open');
+  selectBtn.classList.remove('btn-ghost--active');
+  selectBtn.setAttribute('aria-pressed', 'false');
+  selectBtn.querySelector('.btn-text').textContent = 'Select';
+  // Reset calendar day drawer + URL
+  closeDayDrawer();
+  closeDetailOverlay(true);
+  backToTopBtn.classList.add('hidden');
   switchView('watchlist');
 }
 
@@ -510,6 +553,23 @@ function buildWatchCard(item) {
   footer.appendChild(btnRow);
 
   card.appendChild(footer);
+
+  // Bulk-select affordances (rendered only while select mode is on)
+  if (selectMode) {
+    card.classList.add('watch-card--selecting');
+    if (selectedKeys.has(itemKey(item.id, item.media_type))) {
+      card.classList.add('watch-card--selected');
+    }
+
+    const check = document.createElement('span');
+    check.className   = 'watch-card-check';
+    check.textContent = '✓';
+    check.setAttribute('aria-hidden', 'true');
+    posterWrap.appendChild(check);
+
+    card.addEventListener('click', () => toggleSelection(card, item));
+  }
+
   return card;
 }
 
@@ -535,20 +595,29 @@ async function handleRemove(movieId, movieType, cardEl, btn, errorEl) {
       status === 400 ? 'Bad request — missing parameters.' :
       'Something went wrong. Please try again.';
     showError(errorEl, msg);
-    return;
+    return false;
+  }
+
+  const commit = () => {
+    watchlistData = watchlistData.filter(
+      i => !(String(i.id) === String(movieId) && i.media_type === movieType)
+    );
+    populateGenreFilter();
+    applyFiltersAndSort();
+  };
+
+  // No card to animate (e.g. removed from the detail overlay)
+  if (!cardEl) {
+    commit();
+    return true;
   }
 
   // Animate card out then remove from DOM
   cardEl.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
   cardEl.style.opacity    = '0';
   cardEl.style.transform  = 'scale(0.93)';
-  setTimeout(() => {
-    watchlistData = watchlistData.filter(
-      i => !(String(i.id) === String(movieId) && i.media_type === movieType)
-    );
-    populateGenreFilter();
-    applyFiltersAndSort();
-  }, 250);
+  setTimeout(commit, 250);
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -948,7 +1017,7 @@ async function handleAdd(mediaId, mediaType, btn, feedbackEl) {
       'Something went wrong. Please try again.';
     feedbackEl.className   = 'add-error-msg';
     feedbackEl.textContent = msg;
-    return;
+    return false;
   }
 
   // Success: disable button and refresh watchlist
@@ -957,8 +1026,17 @@ async function handleAdd(mediaId, mediaType, btn, feedbackEl) {
   feedbackEl.className   = 'add-success-msg';
   feedbackEl.textContent = 'Added to watchlist!';
 
-  // Refresh watchlist in background
-  refreshWatchlist();
+  // Flag the card right away (Discover / Recommendations) so the tag matches
+  // the new state without waiting for a re-render.
+  const recCard = btn.closest('.rec-card');
+  if (recCard && !recCard.querySelector('.rec-inlist-badge')) {
+    recCard.querySelector('.rec-card-poster-wrap')?.appendChild(makeInListBadge());
+  }
+
+  // Refresh the watchlist before returning so watchlistData already holds the
+  // new item — callers rely on it to read the real notification state.
+  await refreshWatchlist();
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -975,12 +1053,13 @@ async function refreshWatchlist() {
   if (!ok) {
     // Don't block the user, just silently fail the refresh
     showError(watchlistError, 'Could not refresh watchlist. Please reload the page.');
-    return;
+    return false;
   }
 
   watchlistData = Array.isArray(data) ? data : [];
   populateGenreFilter();
   applyFiltersAndSort();
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -991,7 +1070,22 @@ const TMDB_LOGO_BASE    = 'https://image.tmdb.org/t/p/w92';
 const TMDB_BACKDROP_BASE = 'https://image.tmdb.org/t/p/w1280';
 const TMDB_POSTER_DETAIL = 'https://image.tmdb.org/t/p/w342';
 
-function openDetailOverlay(id, type = 'movie', tvmazeId = null) {
+// ── URL hash sync — #movie/550 · #tv/1399 · #game/1942 ───────
+// Keeps the open detail in the URL so the browser Back button closes it
+// and any detail can be linked to / restored on reload.
+const DETAIL_HASH_RE = /^#(movie|tv|game)\/(.+)$/;
+let openDetail = null; // { id, type } of the overlay currently on screen
+
+function detailHash(id, type) {
+  return `#${type}/${encodeURIComponent(String(id))}`;
+}
+
+function parseDetailHash() {
+  const m = DETAIL_HASH_RE.exec(location.hash || '');
+  return m ? { type: m[1], id: decodeURIComponent(m[2]) } : null;
+}
+
+function openDetailOverlay(id, type = 'movie', tvmazeId = null, fromHash = false) {
   // Reset state
   detailContent.innerHTML = '';
   hide(detailContent);
@@ -1000,6 +1094,15 @@ function openDetailOverlay(id, type = 'movie', tvmazeId = null) {
   show(detailOverlay);
   document.body.style.overflow = 'hidden';
   detailPanel.scrollTop = 0;
+  hide(backToTopBtn);
+
+  openDetail = { id: String(id), type };
+  // Push the hash so Back closes the overlay (skipped when we came *from* the hash)
+  if (!fromHash) {
+    const h = detailHash(id, type);
+    if (location.hash !== h) location.hash = h;
+  }
+
   if (type === 'tv') {
     fetchTVDetail(id, tvmazeId);
   } else if (type === 'game') {
@@ -1009,20 +1112,141 @@ function openDetailOverlay(id, type = 'movie', tvmazeId = null) {
   }
 }
 
-function closeDetailOverlay() {
+function closeDetailOverlay(fromHash = false) {
   hide(detailOverlay);
   document.body.style.overflow = '';
   // Remove any iframes to stop video playback
   detailContent.querySelectorAll('iframe').forEach(f => f.remove());
+  openDetail = null;
+
+  // Drop the hash without adding a history entry (replaceState fires no hashchange)
+  if (!fromHash && location.hash) {
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) { /* ignore */ }
+  }
+
+  syncBackToTop();
 }
 
-detailCloseBtn.addEventListener('click', closeDetailOverlay);
+window.addEventListener('hashchange', () => {
+  const target = parseDetailHash();
+  if (!target) {
+    if (openDetail) closeDetailOverlay(true);
+    return;
+  }
+  if (openDetail && openDetail.id === target.id && openDetail.type === target.type) return;
+  openDetailOverlay(target.id, target.type, null, true);
+});
+
+detailCloseBtn.addEventListener('click', () => closeDetailOverlay());
 detailOverlay.addEventListener('click', e => {
   if (e.target === detailOverlay) closeDetailOverlay();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !detailOverlay.classList.contains('hidden')) closeDetailOverlay();
+  if (e.key !== 'Escape') return;
+  if (!detailOverlay.classList.contains('hidden')) { closeDetailOverlay(); return; }
+  if (!calDayDrawer.classList.contains('hidden')) closeDayDrawer();
 });
+
+// ─────────────────────────────────────────────────────────────
+// Detail overlay — watchlist actions (Add / Notifications / Remove)
+// ─────────────────────────────────────────────────────────────
+
+const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+const NOTIF_SVG = {
+  on:  `<svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9z" fill="currentColor"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>`,
+  off: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+};
+
+/** Drop the action row into the detail headline (called by every detail builder). */
+function insertDetailActions(id, mediaType) {
+  const headline = detailContent.querySelector('.detail-headline');
+  if (!headline) return;
+  headline.appendChild(buildDetailActions(id, mediaType));
+}
+
+function buildDetailActions(id, mediaType) {
+  const row = document.createElement('div');
+  row.className    = 'detail-actions';
+  row.dataset.id   = String(id);
+  row.dataset.type = mediaType;
+  renderDetailActions(row);
+  return row;
+}
+
+/**
+ * Draw the row to match the item's watchlist state:
+ * saved → notifications toggle + remove, not saved → add.
+ * Pass forceInList to skip the lookup right after an add/remove.
+ */
+function renderDetailActions(row, forceInList) {
+  const id        = row.dataset.id;
+  const mediaType = row.dataset.type;
+  const saved     = forceInList !== undefined ? forceInList : isInWatchlist(id, mediaType);
+
+  row.innerHTML = '';
+
+  const errorEl = document.createElement('div');
+  errorEl.className = 'remove-error-msg hidden';
+
+  if (!saved) {
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-add';
+    addBtn.innerHTML = `<span class="btn-text">+ Add to Watchlist</span><span class="btn-spinner spinner hidden" aria-hidden="true"></span>`;
+    addBtn.addEventListener('click', async () => {
+      if (await handleAdd(id, mediaType, addBtn, errorEl)) renderDetailActions(row, true);
+    });
+    row.appendChild(addBtn);
+    row.appendChild(errorEl);
+    return;
+  }
+
+  // Match on id AND media_type — the same id can exist as a different type.
+  const item = watchlistData.find(i => String(i.id) === String(id) && i.media_type === mediaType);
+  // Newly added titles start with notifications on; fall back to that when the
+  // refreshed list has not landed yet instead of showing the bell as off.
+  const notifOn = item ? !!item.notifications : true;
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'watch-card-btn-row';
+
+  const notifBtn = document.createElement('button');
+  notifBtn.className = `btn btn-notif ${notifOn ? 'btn-notif-on' : 'btn-notif-off'}`;
+  notifBtn.setAttribute('aria-label', `${notifOn ? 'Disable' : 'Enable'} notifications`);
+  notifBtn.innerHTML = notifOn ? NOTIF_SVG.on : NOTIF_SVG.off;
+  notifBtn.addEventListener('click', () => handleToggleNotification(id, mediaType, notifBtn, errorEl));
+  btnRow.appendChild(notifBtn);
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'btn btn-trash';
+  removeBtn.innerHTML = TRASH_SVG;
+  removeBtn.setAttribute('aria-label', 'Remove from watchlist');
+  let confirmTimer = null;
+  removeBtn.addEventListener('click', async () => {
+    if (removeBtn.dataset.confirming === 'true') {
+      // Second click — confirm removal
+      clearTimeout(confirmTimer);
+      delete removeBtn.dataset.confirming;
+      removeBtn.classList.remove('btn-trash--confirming');
+      removeBtn.innerHTML = TRASH_SVG;
+      if (await handleRemove(id, mediaType, null, removeBtn, errorEl)) renderDetailActions(row, false);
+      return;
+    }
+    // First click — enter confirming state
+    removeBtn.dataset.confirming = 'true';
+    removeBtn.classList.add('btn-trash--confirming');
+    removeBtn.textContent = '✕ Sure?';
+    confirmTimer = setTimeout(() => {
+      delete removeBtn.dataset.confirming;
+      removeBtn.classList.remove('btn-trash--confirming');
+      removeBtn.innerHTML = TRASH_SVG;
+    }, 3000);
+  });
+  btnRow.appendChild(removeBtn);
+
+  row.appendChild(btnRow);
+  row.appendChild(errorEl);
+}
 
 async function fetchMovieDetail(movieId) {
   const { ok, status, data } = await apiPost('/info/movie', {
@@ -1038,6 +1262,7 @@ async function fetchMovieDetail(movieId) {
   }
 
   buildDetailContent(data);
+  insertDetailActions(movieId, 'movie');
   show(detailContent);
 }
 
@@ -1248,6 +1473,7 @@ function buildDetailContent(d) {
       });
       sec.appendChild(countryBlock);
     });
+    appendDetailCredit(sec, 'Where to Watch data from ', 'JustWatch', 'https://www.justwatch.com');
     body.appendChild(sec);
   }
 
@@ -1434,6 +1660,22 @@ function detailSection(title) {
   return sec;
 }
 
+/** Append a small "label + source link" credit line to a detail section. */
+function appendDetailCredit(section, label, linkText, url) {
+  const p = document.createElement('p');
+  p.className = 'detail-credit';
+  p.appendChild(document.createTextNode(label));
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = linkText;
+  p.appendChild(a);
+
+  section.appendChild(p);
+}
+
 /**
  * Top media band of the detail panel. Always rendered so the poster/headline
  * keeps its overlap — falls back to the blurred poster, then to a gradient.
@@ -1504,6 +1746,7 @@ async function fetchTVDetail(showId, tvmazeId) {
   }
 
   buildTVDetailContent(data);
+  insertDetailActions(showId, 'tv');
   show(detailContent);
 }
 
@@ -1743,6 +1986,7 @@ function buildTVDetailContent(d) {
       });
       sec.appendChild(countryBlock);
     });
+    appendDetailCredit(sec, 'Where to Watch data from ', 'JustWatch', 'https://www.justwatch.com');
     body.appendChild(sec);
   }
 
@@ -1780,35 +2024,28 @@ function buildTVDetailContent(d) {
     seasonNav.appendChild(pillGroup);
     sec.appendChild(seasonNav);
 
-    // Toggle button to expand/collapse episodes
+    // Toggle button to collapse/expand episodes — expanded by default
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'btn btn-ghost detail-ep-toggle';
-    toggleBtn.textContent = 'Show episodes ▾';
-    let epRendered = false;
-    let epExpanded = false;
+    toggleBtn.textContent = 'Hide episodes ▴';
+    let epExpanded = true;
 
-    // Episode grid container — collapsed by default
+    // Episode grid container — rendered and expanded by default
     const episodeGrid = document.createElement('div');
-    episodeGrid.className = 'detail-episode-grid detail-episode-grid--collapsed';
+    episodeGrid.className = 'detail-episode-grid';
+    renderEpisodes(episodeGrid, d.episodes, activeSeason, fmtStamp, epFallback);
 
     toggleBtn.addEventListener('click', () => {
       epExpanded = !epExpanded;
       episodeGrid.classList.toggle('detail-episode-grid--collapsed', !epExpanded);
       toggleBtn.textContent = epExpanded ? 'Hide episodes ▴' : 'Show episodes ▾';
-      // Render episodes lazily on first expand
-      if (epExpanded && !epRendered) {
-        renderEpisodes(episodeGrid, d.episodes, activeSeason, fmtStamp, epFallback);
-        epRendered = true;
-      }
-      // Update season pill clicks to re-render into the now-visible grid
     });
 
-    // Wire season pills to also use the grid (re-render when pill changes)
+    // Wire season pills to re-render into the grid
     pillGroup.querySelectorAll('.pill').forEach(btn => {
       btn.addEventListener('click', () => {
         const s = Number(btn.dataset.season);
         renderEpisodes(episodeGrid, d.episodes, s, fmtStamp, epFallback);
-        epRendered = true;
       });
     });
 
@@ -1995,6 +2232,7 @@ async function fetchGameDetail(gameId) {
   }
 
   buildGameDetailContent(data);
+  insertDetailActions(gameId, 'game');
   show(detailContent);
 }
 
@@ -2066,18 +2304,6 @@ function buildGameDetailContent(d) {
     headline.appendChild(tagEl);
   }
 
-  if (d.genres?.length) {
-    const genreWrap = document.createElement('div');
-    genreWrap.className = 'detail-genres';
-    d.genres.forEach(g => {
-      const tag = document.createElement('span');
-      tag.className = 'genre-tag';
-      tag.textContent = g.name;
-      genreWrap.appendChild(tag);
-    });
-    headline.appendChild(genreWrap);
-  }
-
   // External links — Official Site, IGDB
   const linksRow = document.createElement('div');
   linksRow.className = 'detail-links';
@@ -2109,6 +2335,19 @@ function buildGameDetailContent(d) {
     { label: 'Languages',    value: languages.length ? languages.join(', ') : null, cls: 'detail-quickfact--wide' },
   ]);
   if (facts) body.appendChild(facts);
+
+  // Player perspectives, game modes & genres — one combined chip row
+  const gameTags = [
+    ...(d.player_perspectives || []),
+    ...(d.game_modes || []),
+    ...(d.genres || []),
+  ];
+
+  if (gameTags.length) {
+    const sec = detailSection('Genres, Modes & Perspectives');
+    sec.appendChild(buildGameChips(gameTags, 'detail-tag-chip'));
+    body.appendChild(sec);
+  }
 
   // Time to Beat — durations (seconds) for each play style
   if (d.time_to_beat) {
@@ -2196,7 +2435,7 @@ function buildGameDetailContent(d) {
     body.appendChild(sec);
   }
 
-  // Involved companies — grouped by role
+  // Involved companies — square cards, tagged and colour-coded by role
   if (d.involved_companies?.length) {
     const roles = [
       { key: 'developer',  label: 'Developer' },
@@ -2204,58 +2443,62 @@ function buildGameDetailContent(d) {
       { key: 'porting',    label: 'Porting' },
       { key: 'supporting', label: 'Supporting' },
     ];
+    // Position of a company's highest-priority role (unknown roles sort last)
+    const rankOf = c => {
+      const i = roles.findIndex(r => c[r.key]);
+      return i === -1 ? roles.length : i;
+    };
+
     const sec = detailSection('Companies');
+    const row = document.createElement('div');
+    row.className = 'detail-company-row';
     let any = false;
 
-    roles.forEach(role => {
-      const companies = d.involved_companies.filter(c => c[role.key]);
-      if (!companies.length) return;
-      any = true;
-
-      const label = document.createElement('div');
-      label.className = 'detail-section-sub-label';
-      label.textContent = role.label;
-      sec.appendChild(label);
-
-      const row = document.createElement('div');
-      row.className = 'detail-company-row';
-      companies.forEach(c => {
+    [...d.involved_companies]
+      .sort((a, b) => rankOf(a) - rankOf(b) || (a.company?.name || '').localeCompare(b.company?.name || ''))
+      .forEach(c => {
         const co = c.company || {};
-        const card = document.createElement('a');
-        card.className = 'detail-company-card';
-        if (co.url) { card.href = co.url; card.target = '_blank'; card.rel = 'noopener noreferrer'; }
+        const activeRoles = roles.filter(r => c[r.key]);
+        if (!co.name && !activeRoles.length) return;
+        any = true;
 
-        const logoWrap = document.createElement('div');
-        logoWrap.className = 'detail-company-logo-wrap';
+        const chip = document.createElement('a');
+        chip.className = `detail-company-chip detail-company-chip--${activeRoles[0]?.key || 'supporting'}`;
+        if (co.url) { chip.href = co.url; chip.target = '_blank'; chip.rel = 'noopener noreferrer'; }
+
         if (co.logo_path) {
           const img = document.createElement('img');
           img.src = `${IGDB_LOGO_BASE}${co.logo_path}.webp`;
           img.alt = co.name || '';
-          img.className = 'detail-company-logo';
+          img.className = 'detail-company-chip-logo';
           img.loading = 'lazy';
           img.onerror = () => img.remove();
-          logoWrap.appendChild(img);
+          chip.appendChild(img);
         }
-        card.appendChild(logoWrap);
 
-        const name = document.createElement('div');
-        name.className = 'detail-company-name';
+        const name = document.createElement('span');
+        name.className = 'detail-company-chip-name';
         name.textContent = co.name || 'Unknown';
-        card.appendChild(name);
+        chip.appendChild(name);
 
         if (co.country) {
-          const country = document.createElement('div');
-          country.className = 'detail-company-country';
+          const country = document.createElement('span');
+          country.className = 'detail-company-chip-country';
           country.textContent = fullRegion(co.country);
-          card.appendChild(country);
+          chip.appendChild(country);
         }
 
-        row.appendChild(card);
-      });
-      sec.appendChild(row);
-    });
+        if (activeRoles.length) {
+          const roleTag = document.createElement('span');
+          roleTag.className = 'detail-company-chip-role';
+          roleTag.textContent = activeRoles.map(r => r.label).join(' · ');
+          chip.appendChild(roleTag);
+        }
 
-    if (any) body.appendChild(sec);
+        row.appendChild(chip);
+      });
+
+    if (any) { sec.appendChild(row); body.appendChild(sec); }
   }
 
   // Age ratings
@@ -2278,20 +2521,6 @@ function buildGameDetailContent(d) {
       wrap.appendChild(pill);
     });
     sec.appendChild(wrap);
-    body.appendChild(sec);
-  }
-
-  // Game modes
-  if (d.game_modes?.length) {
-    const sec = detailSection('Game Modes');
-    sec.appendChild(buildGameChips(d.game_modes));
-    body.appendChild(sec);
-  }
-
-  // Player perspectives
-  if (d.player_perspectives?.length) {
-    const sec = detailSection('Player Perspectives');
-    sec.appendChild(buildGameChips(d.player_perspectives));
     body.appendChild(sec);
   }
 
@@ -2416,13 +2645,6 @@ function buildGameDetailContent(d) {
     body.appendChild(sec);
   }
 
-  // Keywords
-  if (d.keywords?.length) {
-    const sec = detailSection('Keywords');
-    sec.appendChild(buildGameChips(d.keywords));
-    body.appendChild(sec);
-  }
-
   // Related content — one horizontal cover row per non-empty group
   const relationGroups = [
     { key: 'bundles',    label: 'Bundles' },
@@ -2436,6 +2658,13 @@ function buildGameDetailContent(d) {
     const sec = buildGameRelationSection(g.label, d[g.key], fmtDate);
     if (sec) body.appendChild(sec);
   });
+
+  // Keywords — kept last, after the related-content rows
+  if (d.keywords?.length) {
+    const sec = detailSection('Keywords');
+    sec.appendChild(buildGameChips(d.keywords));
+    body.appendChild(sec);
+  }
 
   detailContent.appendChild(body);
 }
@@ -2532,6 +2761,10 @@ function switchView(view) {
   const isCalendar = view === 'calendar';
   const isRecs     = view === 'recommendations';
   const isDisc     = view === 'discover';
+
+  // Bulk select belongs to the watchlist — leave the mode when navigating away
+  if (view !== 'watchlist' && selectMode) setSelectMode(false);
+  if (!isCalendar) closeDayDrawer();
 
   watchlistSection.classList.toggle('hidden', isCalendar || isRecs || isDisc);
 
@@ -2769,6 +3002,7 @@ function renderCalendar() {
 }
 
 function renderMonthView(items) {
+  closeDayDrawer();   // a stale day list must not survive a re-render
   const y = calMonthCursor.getFullYear();
   const m = calMonthCursor.getMonth();
   calMonthLabel.textContent = calMonthCursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -2800,6 +3034,17 @@ function renderMonthView(items) {
 
     const dayItems = byDate.get(key);
     if (dayItems && dayItems.length) {
+      // Whole cell opens the day drawer; the chips inside stop propagation.
+      cell.classList.add('cal-day--has-items');
+      cell.tabIndex = 0;
+      cell.setAttribute('aria-label',
+        `${cellDate.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })} — ${dayItems.length} release${dayItems.length === 1 ? '' : 's'}. Press Enter to see them all.`);
+      const openThisDay = () => openDayDrawer(key, dayItems);
+      cell.addEventListener('click', openThisDay);
+      cell.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openThisDay(); }
+      });
+
       const wrap = document.createElement('div');
       wrap.className = 'cal-day-items';
       [...dayItems]
@@ -2832,7 +3077,8 @@ function buildCalendarChip(item) {
   title.textContent = item.media_type === 'tv' ? `${item.title} ${episodeCode(item)}` : item.title;
   chip.appendChild(title);
 
-  chip.addEventListener('click', () => openCalendarItem(item));
+  // Stop the click reaching the day cell (which opens the day drawer)
+  chip.addEventListener('click', e => { e.stopPropagation(); openCalendarItem(item); });
   return chip;
 }
 
@@ -3094,11 +3340,27 @@ function renderRecommendations() {
   }
 
   hide(recommendationsEmpty);
-  items.forEach(it => recommendationsGrid.appendChild(buildRecommendationCard(it)));
+  items.forEach(it => recommendationsGrid.appendChild(buildRecommendationCard(it, { markInList: true })));
   show(recommendationsGrid);
 }
 
-function buildRecommendationCard(item) {
+/** True when the given title is already in the loaded watchlist. */
+function isInWatchlist(id, mediaType) {
+  return watchlistData.some(
+    i => String(i.id) === String(id) && i.media_type === mediaType
+  );
+}
+
+/** "✓ In List" tag overlaid on a poster to flag titles already saved. */
+function makeInListBadge() {
+  const el = document.createElement('span');
+  el.className   = 'rec-inlist-badge';
+  el.textContent = '\u2713 In List';
+  el.title       = 'Already in your watchlist';
+  return el;
+}
+
+function buildRecommendationCard(item, { markInList = false } = {}) {
   const isGame = item.media_type === 'game';
   const genres = (item.genres || []).slice(0, 3).map(g => (typeof g === 'string' ? g : g.name));
   const year   = item.release_date ? String(item.release_date).slice(0, 4) : null;
@@ -3131,6 +3393,10 @@ function buildRecommendationCard(item) {
     scoreBadge.textContent = `\u2605 ${item.recommendation_score}`;
     scoreBadge.title       = `Recommendation score: ${item.recommendation_score}`;
     posterWrap.appendChild(scoreBadge);
+  }
+
+  if (markInList && isInWatchlist(item.id, item.media_type)) {
+    posterWrap.appendChild(makeInListBadge());
   }
 
   card.appendChild(posterWrap);
@@ -3547,7 +3813,7 @@ function renderDiscover({ append = false } = {}) {
     discRendered = 0;
   }
   for (let i = discRendered; i < items.length; i++) {
-    discoverGrid.appendChild(buildRecommendationCard(items[i]));
+    discoverGrid.appendChild(buildRecommendationCard(items[i], { markInList: true }));
   }
   discRendered = items.length;
   show(discoverGrid);
@@ -3610,6 +3876,213 @@ const discObserver = new IntersectionObserver(entries => {
   loadDiscoverMore();
 }, { rootMargin: '400px 0px' });
 discObserver.observe(discoverSentinel);
+
+// ─────────────────────────────────────────────────────────────
+// Back to top
+// ─────────────────────────────────────────────────────────────
+
+const BACK_TO_TOP_AT = 500;
+
+/** Show the button only when scrolled down and no overlay is covering the page. */
+function syncBackToTop() {
+  const visible = window.scrollY > BACK_TO_TOP_AT
+    && detailOverlay.classList.contains('hidden');
+  backToTopBtn.classList.toggle('hidden', !visible);
+}
+
+window.addEventListener('scroll', syncBackToTop, { passive: true });
+backToTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+// ─────────────────────────────────────────────────────────────
+// Detail deep links
+// ─────────────────────────────────────────────────────────────
+
+/** Open whatever detail the URL hash points at (run right after login). */
+function applyInitialDetailHash() {
+  const target = parseDetailHash();
+  if (target) openDetailOverlay(target.id, target.type, null, true);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Calendar — day drawer
+// ─────────────────────────────────────────────────────────────
+
+function openDayDrawer(dateKey, dayItems) {
+  const dateObj = parseKeyDate(dateKey);
+
+  calDayDrawerTitle.textContent = dateObj.toLocaleDateString('en-US', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  calDayDrawerSub.textContent =
+    `${relativeDayLabel(dateObj)} · ${dayItems.length} release${dayItems.length === 1 ? '' : 's'}`;
+
+  calDayDrawerList.innerHTML = '';
+  const typeOrder = { movie: 0, tv: 1, game: 2 };
+  [...dayItems]
+    .sort((a, b) => (typeOrder[a.media_type] ?? 3) - (typeOrder[b.media_type] ?? 3))
+    .forEach(it => calDayDrawerList.appendChild(buildCalendarRow(it)));
+
+  show(calDayDrawer);
+}
+
+function closeDayDrawer() {
+  hide(calDayDrawer);
+}
+
+calDayDrawerClose.addEventListener('click', closeDayDrawer);
+calDayDrawerBackdrop.addEventListener('click', closeDayDrawer);
+
+// ─────────────────────────────────────────────────────────────
+// Watchlist — bulk select
+// ─────────────────────────────────────────────────────────────
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** 'movie:550' style key — the same id in two media types stays distinct. */
+function itemKey(id, mediaType) {
+  return `${mediaType}:${id}`;
+}
+
+function parseItemKey(key) {
+  const at = key.indexOf(':');
+  return { type: key.slice(0, at), id: key.slice(at + 1) };
+}
+
+/** Reflect the selection count on the bulk bar and enable/disable its buttons. */
+function syncBulkBar() {
+  const n = selectedKeys.size;
+  bulkCount.textContent  = `${n} selected`;
+  bulkNotifOn.disabled   = n === 0;
+  bulkNotifOff.disabled  = n === 0;
+  bulkRemoveBtn.disabled = n === 0;
+}
+
+function setSelectMode(on) {
+  selectMode = on;
+  if (!on) selectedKeys.clear();
+
+  selectBtn.classList.toggle('btn-ghost--active', on);
+  selectBtn.setAttribute('aria-pressed', String(on));
+  selectBtn.querySelector('.btn-text').textContent = on ? 'Done' : 'Select';
+
+  bulkBar.classList.toggle('hidden', !on);
+  hide(bulkStatus);
+  document.body.classList.toggle('bulk-open', on);
+
+  syncBulkBar();
+  applyFiltersAndSort();   // redraw the cards with / without their checkboxes
+  syncBackToTop();
+}
+
+function toggleSelection(card, item) {
+  const key = itemKey(item.id, item.media_type);
+  if (selectedKeys.has(key)) selectedKeys.delete(key);
+  else selectedKeys.add(key);
+  card.classList.toggle('watch-card--selected', selectedKeys.has(key));
+  syncBulkBar();
+}
+
+/** Lock the bar's controls while a batch is running. */
+function setBulkBusy(on, text = '') {
+  bulkStatusText.textContent = text;
+  bulkStatus.classList.toggle('hidden', !on);
+  [bulkNotifOn, bulkNotifOff, bulkRemoveBtn, bulkCancelBtn].forEach(b => { b.disabled = on; });
+  if (!on) syncBulkBar();
+}
+
+/**
+ * Run the tasks one at a time with a pause between requests.
+ * The backend has no bulk endpoint, so spacing the calls keeps us clear of rate limits.
+ */
+async function runBulkQueue(tasks, onProgress) {
+  let done = 0, failed = 0, aborted = false;
+
+  for (let i = 0; i < tasks.length; i++) {
+    let res = null;
+    try { res = await tasks[i](); } catch (_) { res = null; }
+
+    if (res && res.status === 401) {   // session died mid-batch — stop the rest
+      aborted = true;
+      failed += tasks.length - i;
+      break;
+    }
+    if (!res || res.ok === false) failed++;
+
+    done++;
+    if (onProgress) onProgress(done, tasks.length);
+    if (i < tasks.length - 1) await sleep(BULK_STEP_DELAY);
+  }
+
+  return { done, failed, aborted };
+}
+
+/** Leave select mode once a batch finishes and surface any failures. */
+function endBulkRun(failed, total, aborted, verb) {
+  setBulkBusy(false);
+  populateGenreFilter();
+  setSelectMode(false);
+
+  if (aborted)     showError(watchlistError, 'Session expired. Please re-login.');
+  else if (failed) showError(watchlistError, `${failed} of ${total} could not be ${verb}.`);
+}
+
+async function bulkRemoveSelected() {
+  const targets = [...selectedKeys].map(parseItemKey);
+  if (!targets.length) return;
+
+  setBulkBusy(true, `Removing 0/${targets.length}…`);
+  const { failed, aborted } = await runBulkQueue(
+    targets.map(t => async () => {
+      const { ok, status } = await apiPost('/remove', {
+        password:  currentPassword,
+        movieId:   String(t.id),
+        movieType: t.type,
+      });
+      if (ok) {
+        watchlistData = watchlistData.filter(
+          i => !(String(i.id) === String(t.id) && i.media_type === t.type)
+        );
+      }
+      return { ok, status };
+    }),
+    (done, total) => { bulkStatusText.textContent = `Removing ${done}/${total}…`; }
+  );
+
+  endBulkRun(failed, targets.length, aborted, 'removed');
+}
+
+async function bulkSetNotifications(enabled) {
+  const targets = [...selectedKeys].map(parseItemKey);
+  if (!targets.length) return;
+
+  setBulkBusy(true, `Updating 0/${targets.length}…`);
+  const { failed, aborted } = await runBulkQueue(
+    targets.map(t => async () => {
+      const { ok, status, data } = await apiPost('/toggle/notification', {
+        password:              currentPassword,
+        movieId:               String(t.id),
+        movieType:             t.type,
+        notifications_enabled: enabled,
+      });
+      if (ok) {
+        const item = watchlistData.find(
+          i => String(i.id) === String(t.id) && i.media_type === t.type
+        );
+        if (item) item.notifications = data?.notification_status === true;
+      }
+      return { ok, status };
+    }),
+    (done, total) => { bulkStatusText.textContent = `Updating ${done}/${total}…`; }
+  );
+
+  endBulkRun(failed, targets.length, aborted, 'updated');
+}
+
+selectBtn.addEventListener('click', () => setSelectMode(!selectMode));
+bulkCancelBtn.addEventListener('click', () => setSelectMode(false));
+bulkRemoveBtn.addEventListener('click', bulkRemoveSelected);
+bulkNotifOn.addEventListener('click', () => bulkSetNotifications(true));
+bulkNotifOff.addEventListener('click', () => bulkSetNotifications(false));
 
 // ─────────────────────────────────────────────────────────────
 // Auto-login with the saved password (skip the overlay on return visits)

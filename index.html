@@ -162,6 +162,13 @@
               <span class="btn-text">Stremio Sync</span>
               <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
             </button>
+            <button id="watchlist-select-btn" class="btn btn-ghost btn-sm" title="Select multiple titles" aria-label="Select multiple titles" aria-pressed="false">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="btn-text">Select</span>
+            </button>
           </div>
           <div class="watchlist-controls">
             <!-- Genre filter -->
@@ -250,6 +257,25 @@
 
         <p id="calendar-empty" class="empty-state hidden">No releases this month.</p>
       </section>
+
+      <!-- Calendar day drawer — opened by clicking a day in the month grid -->
+      <div id="cal-day-drawer" class="cal-day-drawer hidden">
+        <div class="cal-day-drawer-backdrop" id="cal-day-drawer-backdrop"></div>
+        <div class="cal-day-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="cal-day-drawer-title">
+          <div class="cal-day-drawer-head">
+            <div>
+              <h3 id="cal-day-drawer-title" class="cal-day-drawer-title"></h3>
+              <p id="cal-day-drawer-sub" class="cal-day-drawer-sub"></p>
+            </div>
+            <button id="cal-day-drawer-close" class="btn btn-ghost btn-sm" aria-label="Close day list">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div id="cal-day-drawer-list" class="cal-day-drawer-list"></div>
+        </div>
+      </div>
 
       <!-- Recommendations Section -->
       <section id="recommendations-section" class="recommendations-section hidden" aria-label="Recommended for you">
@@ -362,9 +388,34 @@
     </main>
 
     <footer class="site-footer">
-      <p>Digital availability data provided by <a href="https://www.justwatch.com" target="_blank" rel="noopener noreferrer">JustWatch</a></p>
+      <p>Movie &amp; TV data from <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer">TMDB</a></p>
+      <p>Episode data from <a href="https://www.tvmaze.com" target="_blank" rel="noopener noreferrer">TVmaze</a></p>
+      <p>Game data from <a href="https://www.igdb.com" target="_blank" rel="noopener noreferrer">IGDB</a></p>
+      <p>Where to Watch data from <a href="https://www.justwatch.com" target="_blank" rel="noopener noreferrer">JustWatch</a></p>
       <p>Icon Image by <a href="https://www.flaticon.com/authors/iconixar" target="_blank" rel="noopener noreferrer">iconixar - Flaticon</a></p>
     </footer>
+
+    <!-- Back to top -->
+    <button id="back-to-top" class="back-to-top hidden" aria-label="Back to top" title="Back to top">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+    <!-- Bulk actions bar (watchlist multi-select) -->
+    <div id="bulk-bar" class="bulk-bar hidden" role="toolbar" aria-label="Bulk actions">
+      <span id="bulk-count" class="bulk-count">0 selected</span>
+      <div class="bulk-actions">
+        <button id="bulk-notif-on" class="btn btn-secondary btn-sm" disabled>Notif. on</button>
+        <button id="bulk-notif-off" class="btn btn-secondary btn-sm" disabled>Notif. off</button>
+        <button id="bulk-remove" class="btn btn-danger btn-sm" disabled>Remove</button>
+        <button id="bulk-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+      </div>
+      <span id="bulk-status" class="bulk-status hidden" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="bulk-status-text"></span>
+      </span>
+    </div>
   </div>
 
   <!-- ── Movie Detail Overlay ───────────────────────────────────────── -->
