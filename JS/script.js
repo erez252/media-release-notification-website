@@ -333,6 +333,7 @@ function handleLogout() {
   // Reset calendar day drawer + URL
   closeDayDrawer();
   closeDetailOverlay(true);
+  closeWatchlistMenu();
   backToTopBtn.classList.add('hidden');
   switchView('watchlist');
 }
@@ -4083,6 +4084,41 @@ bulkCancelBtn.addEventListener('click', () => setSelectMode(false));
 bulkRemoveBtn.addEventListener('click', bulkRemoveSelected);
 bulkNotifOn.addEventListener('click', () => bulkSetNotifications(true));
 bulkNotifOff.addEventListener('click', () => bulkSetNotifications(false));
+
+// ─────────────────────────────────────────────────────────────
+// Watchlist header — mobile ⋯ menu holding Stremio Sync + Select
+// ─────────────────────────────────────────────────────────────
+
+const watchlistMoreBtn = $('watchlist-more-btn');
+const watchlistActions = $('watchlist-actions');
+
+function closeWatchlistMenu() {
+  if (!watchlistActions.classList.contains('open')) return;
+  watchlistActions.classList.remove('open');
+  watchlistMoreBtn.setAttribute('aria-expanded', 'false');
+}
+
+watchlistMoreBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  const open = watchlistActions.classList.toggle('open');
+  watchlistMoreBtn.setAttribute('aria-expanded', String(open));
+});
+
+// Tapping anywhere outside the menu closes it
+document.addEventListener('click', e => {
+  if (!watchlistActions.classList.contains('open')) return;
+  if (watchlistActions.contains(e.target) || watchlistMoreBtn.contains(e.target)) return;
+  closeWatchlistMenu();
+});
+
+// Picking an action inside the menu closes it
+watchlistActions.addEventListener('click', e => {
+  if (e.target.closest('button')) closeWatchlistMenu();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeWatchlistMenu();
+});
 
 // ─────────────────────────────────────────────────────────────
 // Auto-login with the saved password (skip the overlay on return visits)

@@ -155,19 +155,31 @@
               </svg>
               <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
             </button>
-            <button id="stremio-sync-btn" class="btn btn-ghost btn-sm btn-stremio" title="Sync with Stremio" aria-label="Sync with Stremio">
+            <!-- Sync + Select: inline on desktop, tucked into the ⋯ popover on mobile -->
+            <div id="watchlist-actions" class="watchlist-actions">
+              <button id="stremio-sync-btn" class="btn btn-ghost btn-sm btn-stremio" title="Sync with Stremio" aria-label="Sync with Stremio">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="btn-text">Stremio Sync</span>
+                <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
+              </button>
+              <button id="watchlist-select-btn" class="btn btn-ghost btn-sm" title="Select multiple titles" aria-label="Select multiple titles" aria-pressed="false">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="btn-text">Select</span>
+              </button>
+            </div>
+
+            <!-- Mobile-only overflow trigger -->
+            <button id="watchlist-more-btn" class="btn btn-ghost btn-sm watchlist-more-btn" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="5" r="1.7" fill="currentColor"/>
+                <circle cx="12" cy="12" r="1.7" fill="currentColor"/>
+                <circle cx="12" cy="19" r="1.7" fill="currentColor"/>
               </svg>
-              <span class="btn-text">Stremio Sync</span>
-              <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
-            </button>
-            <button id="watchlist-select-btn" class="btn btn-ghost btn-sm" title="Select multiple titles" aria-label="Select multiple titles" aria-pressed="false">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span class="btn-text">Select</span>
             </button>
           </div>
           <div class="watchlist-controls">

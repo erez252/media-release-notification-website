@@ -583,6 +583,18 @@ input {
   gap: 10px;
 }
 
+/* Sync + Select group — sits inline next to the title on desktop */
+.watchlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The ⋯ trigger only exists on mobile */
+.watchlist-more-btn {
+  display: none;
+}
+
 .watchlist-controls {
   display: flex;
   flex-wrap: wrap;
@@ -2973,5 +2985,54 @@ body.bulk-open .back-to-top { bottom: 86px; }
 
 @media (prefers-reduced-motion: reduce) {
   .cal-day-drawer-panel { animation: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Watchlist header — mobile: Sync + Select collapse into a ⋯ menu
+───────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .watchlist-title-row {
+    position: relative;
+  }
+
+  /* Let the title shrink instead of pushing the buttons off-screen */
+  .watchlist-title-row .section-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .watchlist-more-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  /* The button group becomes a popover anchored under the ⋯ trigger */
+  .watchlist-actions {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 60;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 190px;
+    padding: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay);
+  }
+
+  .watchlist-actions.open {
+    display: flex;
+  }
+
+  .watchlist-actions .btn {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
 }
 
