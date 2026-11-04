@@ -1104,12 +1104,17 @@ function openDetailOverlay(id, type = 'movie', tvmazeId = null, fromHash = false
     if (location.hash !== h) location.hash = h;
   }
 
+  // The cached watchlist entry usually already carries the Wikidata id —
+  // passing it along saves the backend a lookup.
+  const cached    = watchlistData.find(i => String(i.id) === String(id) && i.media_type === type);
+  const wikiDataId = cached?.wikidata_id || null;
+
   if (type === 'tv') {
-    fetchTVDetail(id, tvmazeId);
+    fetchTVDetail(id, tvmazeId, wikiDataId);
   } else if (type === 'game') {
     fetchGameDetail(id);
   } else {
-    fetchMovieDetail(id);
+    fetchMovieDetail(id, wikiDataId);
   }
 }
 
@@ -1249,10 +1254,11 @@ function renderDetailActions(row, forceInList) {
   row.appendChild(errorEl);
 }
 
-async function fetchMovieDetail(movieId) {
+async function fetchMovieDetail(movieId, wikiDataId) {
   const { ok, status, data } = await apiPost('/info/movie', {
-    password: currentPassword,
-    movieId:  String(movieId),
+    password:   currentPassword,
+    movieId:    String(movieId),
+    wikiDataId: wikiDataId || undefined,
   });
 
   hide(detailLoading);
@@ -1385,6 +1391,24 @@ function buildDetailContent(d) {
     a.className = 'detail-ext-link'; a.textContent = 'TMDB';
     linksRow.appendChild(a);
   }
+  if (d.wikidata_id) {
+    const a = document.createElement('a');
+    a.href = `https://www.wikidata.org/wiki/Special:GoToLinkedPage/enwiki/${d.wikidata_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Wikipedia';
+    linksRow.appendChild(a);
+  }
+  if (d.disney_plus) {
+    const a = document.createElement('a');
+    a.href = d.disney_plus; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Disney+';
+    linksRow.appendChild(a);
+  }
+  if (d.trakt) {
+    const a = document.createElement('a');
+    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
+    linksRow.appendChild(a);
+  }
   if (linksRow.children.length) headline.appendChild(linksRow);
 
   hero.appendChild(headline);
@@ -1409,6 +1433,18 @@ function buildDetailContent(d) {
     { label: 'Revenue',      value: d.revenue > 0 ? `$${fmt(d.revenue)}` : null },
   ]);
   if (facts) body.appendChild(facts);
+
+  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
+  const scoresSec = buildScoresSection(d);
+  if (scoresSec) body.appendChild(scoresSec);
+
+  // Series & Franchises — grouped together right after ratings
+  const sagaSec = buildSeriesFranchiseSection(d);
+  if (sagaSec) body.appendChild(sagaSec);
+
+  // Based On — source works, linked to Wikidata
+  const basedOnSec = buildBasedOnSection(d);
+  if (basedOnSec) body.appendChild(basedOnSec);
 
   // Overview
   if (d.overview) {
@@ -1677,6 +1713,305 @@ function appendDetailCredit(section, label, linkText, url) {
   section.appendChild(p);
 }
 
+// ─────────────────────────────────────────────────────────────
+// Detail — Wikidata enrichment (movies + TV)
+//   ratings · previous/following · franchises · universe · based on
+// ─────────────────────────────────────────────────────────────
+
+/** Wikipedia article for a Wikidata item id (e.g. "Q126092795"). */
+function wikiGoUrl(wikiId) {
+  return `https://www.wikidata.org/wiki/Special:GoToLinkedPage/enwiki/${encodeURIComponent(wikiId)}`;
+}
+
+/** The TMDB target of an entry, or null when it can't be opened in-app. */
+function tmdbTargetOf(obj) {
+  if (!obj || obj.id === undefined || obj.id === null || obj.id === '') return null;
+  const type = obj.media_type;
+  if (type !== 'movie' && type !== 'tv' && type !== 'game') return null;
+  return { id: String(obj.id), type };
+}
+
+/**
+ * Anchor for a related entry: opens the in-app detail overlay (through the
+ * existing #movie/123 deep link) when a TMDB id exists, otherwise links to
+ * the Wikidata page. A plain <span> when there is neither.
+ */
+function buildEntityLink(obj, className) {
+  const target = tmdbTargetOf(obj);
+  const wikiId = obj?.wiki_id || obj?.wikidata_id || null;
+
+  let el;
+  if (target) {
+    el = document.createElement('a');
+    el.href = detailHash(target.id, target.type);
+  } else if (wikiId) {
+    el = document.createElement('a');
+    el.href = wikiGoUrl(wikiId);
+    el.target = '_blank';
+    el.rel = 'noopener noreferrer';
+  } else {
+    el = document.createElement('span');
+  }
+
+  el.className = className;
+  return el;
+}
+
+/**
+ * Upgrades a plain-http image/asset URL to https. The page is served over
+ * https, so a http:// logo would be dropped by the browser as mixed content.
+ */
+function httpsUrl(url) {
+  return typeof url === 'string' ? url.replace(/^http:\/\//i, 'https://') : url;
+}
+
+/** "67/100", "8.5/10" and "96%" all become a 0–100 number (null if unparsable). */
+function scoreToPercent(raw) {
+  const str = String(raw ?? '').trim();
+  if (!str) return null;
+  const clamp = n => Math.max(0, Math.min(100, n));
+
+  if (str.includes('%')) {
+    const n = parseFloat(str);
+    return Number.isFinite(n) ? clamp(n) : null;
+  }
+
+  const frac = str.match(/(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
+  if (frac) {
+    const num = parseFloat(frac[1].replace(',', '.'));
+    const den = parseFloat(frac[2].replace(',', '.'));
+    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) return clamp((num / den) * 100);
+  }
+  return null;
+}
+
+/** Ratings — one card per external score source (Metacritic, RT, …). */
+function buildScoresSection(d) {
+  const scores = (d.scores || []).filter(s => s && (s.score || s.source));
+  if (!scores.length) return null;
+
+  const sec = detailSection('Ratings');
+  const row = document.createElement('div');
+  row.className = 'detail-score-row';
+
+  scores.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'detail-score-card';
+
+    const head = document.createElement('div');
+    head.className = 'detail-score-head';
+
+    const addSourceName = () => {
+      if (!s.source) return;
+      const name = document.createElement('span');
+      name.className = 'detail-score-source';
+      name.textContent = s.source;
+      head.appendChild(name);
+    };
+
+    if (s.source_logo) {
+      const logo = document.createElement('img');
+      logo.className = 'detail-score-logo';
+      logo.src = httpsUrl(s.source_logo);
+      logo.alt = s.source || '';
+      logo.loading = 'lazy';
+      // A broken logo shouldn't leave the card without any source name
+      logo.addEventListener('error', () => { logo.remove(); addSourceName(); });
+      head.appendChild(logo);
+    } else {
+      addSourceName();
+    }
+    card.appendChild(head);
+
+    if (s.score) {
+      const value = document.createElement('span');
+      value.className = 'detail-score-value';
+      value.textContent = s.score;
+      card.appendChild(value);
+
+      const pct = scoreToPercent(s.score);
+      if (pct !== null) {
+        const bar  = document.createElement('div');
+        bar.className = 'detail-score-bar';
+        const fill = document.createElement('div');
+        fill.className = 'detail-score-bar-fill';
+        fill.style.width = `${pct}%`;
+        bar.appendChild(fill);
+        card.appendChild(bar);
+      }
+    }
+
+    if (s.score_method) {
+      const method = document.createElement('span');
+      method.className = 'detail-score-method';
+      method.textContent = s.score_method;
+      card.appendChild(method);
+    }
+
+    if (s.review_count) {
+      const count = document.createElement('span');
+      count.className = 'detail-score-count';
+      const unit  = s.review_count_unit || 'review';
+      const label = s.review_count === 1 || /s$/.test(unit) ? unit : `${unit}s`;
+      count.textContent = `${fmt(s.review_count) || s.review_count} ${label}`;
+      card.appendChild(count);
+    }
+
+    row.appendChild(card);
+  });
+
+  sec.appendChild(row);
+  return sec;
+}
+
+/** A single previous/following tile. */
+function buildNavTile(obj, label) {
+  const tile = buildEntityLink(obj, 'detail-nav-tile');
+  if (tmdbTargetOf(obj)) tile.classList.add('detail-nav-tile--linked');
+
+  if (obj.logo) {
+    tile.classList.add('has-logo');
+    const wrap = document.createElement('div');
+    wrap.className = 'detail-nav-logo-wrap';
+
+    const logo = document.createElement('img');
+    logo.className = 'detail-nav-logo';
+    logo.src = httpsUrl(obj.logo);
+    logo.alt = obj.name || '';
+    logo.loading = 'lazy';
+    logo.addEventListener('error', () => {
+      wrap.remove();
+      tile.classList.remove('has-logo');
+    });
+    wrap.appendChild(logo);
+    tile.appendChild(wrap);
+  }
+
+  const tag = document.createElement('span');
+  tag.className = 'detail-nav-tag';
+  tag.textContent = label;
+  tile.appendChild(tag);
+
+  const name = document.createElement('span');
+  name.className = 'detail-nav-name';
+  name.textContent = obj.name || 'Untitled';
+  tile.appendChild(name);
+
+  return tile;
+}
+
+/** A previous + following pair, or null when neither is present. */
+function buildNavPair(prev, next) {
+  const tiles = [];
+  if (prev?.name) tiles.push(buildNavTile(prev, 'Previous'));
+  if (next?.name) tiles.push(buildNavTile(next, 'Following'));
+  if (!tiles.length) return null;
+
+  const row = document.createElement('div');
+  row.className = 'detail-nav-row';
+  tiles.forEach(t => row.appendChild(t));
+  return row;
+}
+
+/**
+ * Combined section for Series, Universe and Franchises.
+ * Placed high up (under Ratings) so everything related to the media's
+ * place in a saga is together.
+ */
+function buildSeriesFranchiseSection(d) {
+  const banner = [];
+  const seenNames = new Set();
+
+  if (d.universe?.name) {
+    banner.push({ ...d.universe, label: 'Part of the', type: 'universe' });
+    seenNames.add(d.universe.name.toLowerCase());
+  }
+  
+  const mf = d.main_franchises;
+  const mfList = Array.isArray(mf) ? mf : (mf ? [mf] : []);
+  mfList.forEach(item => {
+    if (item?.name && !seenNames.has(item.name.toLowerCase())) {
+      banner.push({ ...item, label: 'Main franchise:', type: 'franchise' });
+      seenNames.add(item.name.toLowerCase());
+    }
+  });
+
+  const mainSeriesPair = buildNavPair(d.previous, d.following);
+  const franchises = (d.franchises || []).filter(f => {
+    if (!f || (!f.name && !f.wiki_id)) return false;
+    // If it's a franchise with no prev/next, and its name is already in the banner, skip it
+    if (!f.previous && !f.following && f.name && seenNames.has(f.name.toLowerCase())) return false;
+    return true;
+  });
+
+  if (!banner.length && !mainSeriesPair && !franchises.length) return null;
+
+  const sec = detailSection('Series & Franchises');
+
+  if (banner.length) {
+    const row = document.createElement('div');
+    row.className = 'detail-universe-row';
+    banner.forEach(u => {
+      const span = document.createElement('span');
+      span.className = 'detail-universe-item';
+      
+      const label = document.createElement('span');
+      label.className = 'detail-universe-label';
+      label.textContent = `${u.label} `;
+      span.appendChild(label);
+
+      const link = buildEntityLink(u, 'detail-universe-link');
+      link.textContent = u.name;
+      span.appendChild(link);
+      
+      row.appendChild(span);
+    });
+    sec.appendChild(row);
+  }
+
+  if (mainSeriesPair) {
+    sec.appendChild(mainSeriesPair);
+  }
+
+  franchises.forEach(f => {
+    const block = document.createElement('div');
+    block.className = 'detail-franchise';
+
+    const head = document.createElement('div');
+    head.className = 'detail-franchise-head';
+    const nameEl = buildEntityLink(f, 'detail-franchise-name');
+    nameEl.textContent = f.name || 'Franchise';
+    head.appendChild(nameEl);
+    block.appendChild(head);
+
+    const pair = buildNavPair(f.previous, f.following);
+    if (pair) block.appendChild(pair);
+
+    sec.appendChild(block);
+  });
+
+  return sec;
+}
+
+/** "Based on" — books, articles or earlier works, linked to Wikidata. */
+function buildBasedOnSection(d) {
+  const items = (d.based_on || []).filter(b => b && b.name);
+  if (!items.length) return null;
+
+  const sec = detailSection('Based On');
+  const row = document.createElement('div');
+  row.className = 'detail-linkrow';
+
+  items.forEach(b => {
+    const chip = buildEntityLink(b, 'detail-link-chip');
+    chip.textContent = b.name;
+    row.appendChild(chip);
+  });
+
+  sec.appendChild(row);
+  return sec;
+}
+
 /**
  * Top media band of the detail panel. Always rendered so the poster/headline
  * keeps its overlap — falls back to the blurred poster, then to a gradient.
@@ -1732,11 +2067,12 @@ function buildQuickFacts(facts) {
 
 const TMDB_PROFILE_BASE = 'https://image.tmdb.org/t/p/w185';
 
-async function fetchTVDetail(showId, tvmazeId) {
+async function fetchTVDetail(showId, tvmazeId, wikiDataId) {
   const { ok, data } = await apiPost('/info/tv', {
-    password:  currentPassword,
-    showId:    String(showId),
-    tvmazeid:  tvmazeId ? String(tvmazeId) : undefined,
+    password:   currentPassword,
+    showId:     String(showId),
+    tvmazeid:   tvmazeId ? String(tvmazeId) : undefined,
+    wikiDataId: wikiDataId || undefined,
   });
 
   hide(detailLoading);
@@ -1879,10 +2215,28 @@ function buildTVDetailContent(d) {
     a.className = 'detail-ext-link'; a.textContent = 'TVDB';
     linksRow.appendChild(a);
   }
+  if (d.wikidata_id) {
+    const a = document.createElement('a');
+    a.href = `https://www.wikidata.org/wiki/Special:GoToLinkedPage/enwiki/${d.wikidata_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Wikipedia';
+    linksRow.appendChild(a);
+  }
   if (d.tvmaze_id) {
     const a = document.createElement('a');
     a.href = `https://www.tvmaze.com/shows/${d.tvmaze_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'TVmaze';
+    linksRow.appendChild(a);
+  }
+  if (d.disney_plus) {
+    const a = document.createElement('a');
+    a.href = d.disney_plus; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Disney+';
+    linksRow.appendChild(a);
+  }
+  if (d.trakt) {
+    const a = document.createElement('a');
+    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
     linksRow.appendChild(a);
   }
   if (linksRow.children.length) headline.appendChild(linksRow);
@@ -1931,6 +2285,18 @@ function buildTVDetailContent(d) {
     { label: 'Revenue',      value: d.revenue > 0 ? `$${(d.revenue).toLocaleString('en-US')}` : null },
   ]);
   if (facts) body.appendChild(facts);
+
+  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
+  const scoresSec = buildScoresSection(d);
+  if (scoresSec) body.appendChild(scoresSec);
+
+  // Series & Franchises — grouped together right after ratings
+  const sagaSec = buildSeriesFranchiseSection(d);
+  if (sagaSec) body.appendChild(sagaSec);
+
+  // Based On — source works, linked to Wikidata
+  const basedOnSec = buildBasedOnSection(d);
+  if (basedOnSec) body.appendChild(basedOnSec);
 
   // Overview
   if (d.overview) {
