@@ -49,12 +49,15 @@
           <span class="brand-name">Watchlist</span>
         </div>
 
-        <!-- Main view toggle -->
-        <div class="view-toggle" role="group" aria-label="Main view">
-          <button class="pill active" data-view="watchlist">Watchlist</button>
-          <button class="pill" data-view="calendar">Calendar</button>
-          <button class="pill" data-view="recommendations">Recommendations</button>
-          <button class="pill" data-view="discover">Discover</button>
+        <!-- Main view toggle (wrapper carries the edge fades for mobile scrolling) -->
+        <div class="view-toggle-wrap">
+          <div class="view-toggle" role="group" aria-label="Main view">
+            <button class="pill active" data-view="watchlist">Watchlist</button>
+            <button class="pill" data-view="calendar">Calendar</button>
+            <button class="pill" data-view="recommendations">Recommendations</button>
+            <button class="pill" data-view="discover">Discover</button>
+            <button class="pill" data-view="news">News</button>
+          </div>
         </div>
 
         <button id="logout-btn" class="btn btn-ghost logout-btn" title="Lock watchlist" aria-label="Lock watchlist">
@@ -395,6 +398,74 @@
         </div>
 
         <p id="discover-empty" class="empty-state hidden">Nothing to discover here.</p>
+      </section>
+
+      <!-- News Section -->
+      <section id="news-section" class="news-section hidden" aria-label="News">
+        <div class="news-header">
+          <div class="news-title-row">
+            <h2 class="section-title">
+              News
+              <span id="news-count" class="count-badge">0</span>
+            </h2>
+
+            <span id="news-updated" class="news-updated hidden"></span>
+
+            <button id="news-refresh-btn" class="btn btn-ghost btn-sm" title="Reload feed" aria-label="Reload feed">
+              <svg class="refresh-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
+            </button>
+
+            <!-- Re-collects from every source, unlike the plain reload beside it -->
+            <button id="news-make-btn" class="btn btn-secondary btn-sm" title="Collect new articles from all sources">
+              <span class="btn-text">Update Sources</span>
+              <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <!-- News-only controls; the global header stays untouched -->
+          <div class="news-controls">
+            <div class="search-input-wrap news-search-wrap">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <input
+                type="text"
+                id="news-search"
+                class="text-input search-text"
+                placeholder="Search news…"
+                aria-label="Search news"
+                autocomplete="off"
+              />
+            </div>
+            <select id="news-source" class="filter-select" aria-label="Filter by source">
+              <option value="">All Sources</option>
+            </select>
+          </div>
+        </div>
+
+        <p id="news-error" class="error-msg hidden" role="alert"></p>
+        <p id="news-status" class="news-status hidden" role="status"></p>
+
+        <div id="news-loading" class="loading-state hidden">
+          <div class="spinner spinner-lg" aria-hidden="true"></div>
+          <p>Loading news&hellip;</p>
+        </div>
+
+        <div id="news-feed" class="news-feed hidden" role="list"></div>
+
+        <div id="news-footer" class="news-footer hidden">
+          <button id="news-more-btn" class="btn btn-secondary">
+            <span class="btn-text">Load more</span>
+            <span class="btn-spinner spinner hidden" aria-hidden="true"></span>
+          </button>
+          <div id="news-sentinel" class="news-sentinel" aria-hidden="true"></div>
+          <p id="news-end" class="news-end hidden">You&rsquo;ve reached the end.</p>
+        </div>
+
+        <p id="news-empty" class="empty-state hidden">No news articles yet.</p>
       </section>
 
     </main>

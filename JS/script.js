@@ -321,6 +321,29 @@ function handleLogout() {
   hide(discoverEnd);
   hide(discoverLoading);
   clearError(discoverError);
+  // Reset news view
+  newsItems        = [];
+  newsRendered     = 0;
+  newsOffset       = 0;
+  newsHasMore      = false;
+  newsQuery        = '';
+  newsSource       = '';
+  newsReady        = false;
+  newsBusy         = false;
+  newsSourcesBuilt = false;
+  newsFeed.innerHTML = '';
+  newsCount.textContent = '0';
+  newsSearchIn.value = '';
+  newsSourceSel.innerHTML = '<option value="">All Sources</option>';
+  hide(newsFeed);
+  hide(newsEmpty);
+  hide(newsFooter);
+  hide(newsEnd);
+  hide(newsLoading);
+  hide(newsUpdated);
+  showNewsStatus('');
+  setBtnLoading(newsMakeBtn, false);
+  clearError(newsError);
   // Reset bulk-select mode
   selectMode = false;
   selectedKeys.clear();
@@ -3122,23 +3145,44 @@ refreshBtn.addEventListener('click', async () => {
 
 const viewToggleBtns   = document.querySelectorAll('.view-toggle [data-view]');
 const watchlistSection = document.querySelector('.watchlist-section');
+const viewToggleEl     = document.querySelector('.view-toggle-wrap .view-toggle');
+const viewToggleWrap   = document.querySelector('.view-toggle-wrap');
+
+/**
+ * Edge fades on the tab row. Five tabs no longer fit on a phone, so the row
+ * scrolls sideways and each fade shows only while there is more that way.
+ */
+function syncViewToggleFade() {
+  if (!viewToggleEl || !viewToggleWrap) return;
+  const max = viewToggleEl.scrollWidth - viewToggleEl.clientWidth;
+  viewToggleWrap.classList.toggle('can-scroll-left',  viewToggleEl.scrollLeft > 1);
+  viewToggleWrap.classList.toggle('can-scroll-right', viewToggleEl.scrollLeft < max - 1);
+}
+
+/** Bring the active tab into view without nudging the page itself. */
+function scrollActiveTabIntoView() {
+  const active = viewToggleEl?.querySelector('.pill.active');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 
 function switchView(view) {
   viewToggleBtns.forEach(b => b.classList.toggle('active', b.dataset.view === view));
   const isCalendar = view === 'calendar';
   const isRecs     = view === 'recommendations';
   const isDisc     = view === 'discover';
+  const isNews     = view === 'news';
 
   // Bulk select belongs to the watchlist — leave the mode when navigating away
   if (view !== 'watchlist' && selectMode) setSelectMode(false);
   if (!isCalendar) closeDayDrawer();
 
-  watchlistSection.classList.toggle('hidden', isCalendar || isRecs || isDisc);
+  watchlistSection.classList.toggle('hidden', isCalendar || isRecs || isDisc || isNews);
 
   hide(searchSection);
   hide(calendarSection);
   hide(recommendationsSection);
   hide(discoverSection);
+  hide(newsSection);
 
   if (isCalendar) {
     show(calendarSection);
@@ -3152,10 +3196,23 @@ function switchView(view) {
     show(discoverSection);
     syncDiscoverControls();
     if (!discoverReady) loadDiscover();
+  } else if (isNews) {
+    show(newsSection);
+    if (!newsReady) loadNews();
   }
+
+  scrollActiveTabIntoView();
+  syncViewToggleFade();
 }
 
 viewToggleBtns.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+
+viewToggleEl?.addEventListener('scroll', syncViewToggleFade, { passive: true });
+window.addEventListener('resize', syncViewToggleFade);
+window.addEventListener('load', () => {
+  scrollActiveTabIntoView();
+  syncViewToggleFade();
+});
 
 // ─────────────────────────────────────────────────────────────
 // Calendar
@@ -4243,6 +4300,383 @@ const discObserver = new IntersectionObserver(entries => {
   loadDiscoverMore();
 }, { rootMargin: '400px 0px' });
 discObserver.observe(discoverSentinel);
+
+// ─────────────────────────────────────────────────────────────
+// News
+// ─────────────────────────────────────────────────────────────
+
+const newsSection    = $('news-section');
+const newsError      = $('news-error');
+const newsLoading    = $('news-loading');
+const newsFeed       = $('news-feed');
+const newsCount      = $('news-count');
+const newsEmpty      = $('news-empty');
+const newsFooter     = $('news-footer');
+const newsEnd        = $('news-end');
+const newsSentinel   = $('news-sentinel');
+const newsMoreBtn    = $('news-more-btn');
+const newsSearchIn   = $('news-search');
+const newsSourceSel  = $('news-source');
+const newsUpdated    = $('news-updated');
+const newsRefreshBtn = $('news-refresh-btn');
+const newsMakeBtn    = $('news-make-btn');
+const newsStatus     = $('news-status');
+
+const NEWS_PAGE_SIZE = 30;
+
+let newsItems        = [];    // accumulated articles
+let newsRendered     = 0;     // how many of them are already in the DOM
+let newsOffset       = 0;
+let newsHasMore      = false;
+let newsQuery        = '';    // server-side title/summary search
+let newsSource       = '';    // '' = every source
+let newsReady        = false; // has a page been loaded successfully?
+let newsBusy         = false; // a page request is in flight
+let newsSourcesBuilt = false; // the source dropdown is only filled once
+let newsSearchTimer  = null;
+let newsStatusTimer  = null;
+let newsGen          = 0;     // invalidates responses of superseded requests
+
+/** "3h ago" style label, falling back to a date once it is over a week old. */
+function newsTimeAgo(iso) {
+  const then = new Date(iso);
+  if (isNaN(then.getTime())) return '';
+  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+  if (mins < 1)  return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7)  return `${days}d ago`;
+  return then.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Square site icon for an article's source, derived from its homepage. */
+function newsSourceIcon(sourceUrl) {
+  try {
+    const host = new URL(sourceUrl).hostname.replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Stand-in for a missing or broken thumbnail. */
+function newsThumbPlaceholder(source) {
+  const ph = document.createElement('div');
+  ph.className = 'news-thumb-ph';
+  ph.textContent = source || 'News';
+  return ph;
+}
+
+function buildNewsCard(a) {
+  const card = document.createElement('a');
+  card.className = 'news-card';
+  card.href      = a.url;
+  card.target    = '_blank';
+  card.rel       = 'noopener noreferrer';
+
+  // Thumbnails arrive in every shape, so they are cropped into a fixed 16:9 box
+  const thumb = document.createElement('div');
+  thumb.className = 'news-thumb';
+  if (a.thumbnail) {
+    const img = document.createElement('img');
+    img.src     = httpsUrl(a.thumbnail);
+    img.alt     = '';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => img.replaceWith(newsThumbPlaceholder(a.source)));
+    thumb.appendChild(img);
+  } else {
+    thumb.appendChild(newsThumbPlaceholder(a.source));
+  }
+  card.appendChild(thumb);
+
+  const body = document.createElement('div');
+  body.className = 'news-body';
+
+  const meta = document.createElement('div');
+  meta.className = 'news-meta';
+
+  const iconUrl = newsSourceIcon(a.source_url);
+  if (iconUrl) {
+    const ico = document.createElement('img');
+    ico.className = 'news-source-logo';
+    ico.src     = iconUrl;
+    ico.alt     = '';
+    ico.loading = 'lazy';
+    ico.addEventListener('error', () => ico.remove());
+    meta.appendChild(ico);
+  }
+
+  const source = document.createElement('span');
+  source.className = 'news-source';
+  source.textContent = a.source || '';
+  meta.appendChild(source);
+
+  const time = newsTimeAgo(a.published);
+  if (time) {
+    const dot = document.createElement('span');
+    dot.className = 'news-dot';
+    dot.textContent = '\u00b7';
+    meta.appendChild(dot);
+
+    const when = document.createElement('span');
+    when.className = 'news-time';
+    when.textContent = time;
+    meta.appendChild(when);
+  }
+  body.appendChild(meta);
+
+  const title = document.createElement('h3');
+  title.className = 'news-title';
+  title.textContent = a.title || 'Untitled';
+  body.appendChild(title);
+
+  if (a.summary) {
+    const summary = document.createElement('p');
+    summary.className = 'news-summary';
+    summary.textContent = a.summary;
+    body.appendChild(summary);
+  }
+
+  card.appendChild(body);
+  return card;
+}
+
+/** Fill the source dropdown from the list the endpoint reports (once). */
+function buildNewsSourceOptions(sources) {
+  if (newsSourcesBuilt || !Array.isArray(sources) || !sources.length) return;
+  sources.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value       = name;
+    opt.textContent = name;
+    newsSourceSel.appendChild(opt);
+  });
+  newsSourcesBuilt = true;
+}
+
+/** One page of articles, using the current search + source filter. */
+async function fetchNewsPage() {
+  const params = new URLSearchParams();
+  params.set('limit',  String(NEWS_PAGE_SIZE));
+  params.set('offset', String(newsOffset));
+  if (newsQuery)  params.set('query', newsQuery);
+  if (newsSource) params.set('source_filter', newsSource);
+
+  try {
+    const res = await fetch(`${API}/news/get?${params.toString()}`, {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${currentPassword}`,
+        'Content-Type':  'application/json',
+      },
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* empty body */ }
+    return { ok: res.ok, status: res.status, data };
+  } catch (_) {
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+/** Render (or extend) the feed from the accumulated articles. */
+function renderNews({ append = false } = {}) {
+  newsCount.textContent = newsItems.length;
+
+  if (!newsItems.length) {
+    newsFeed.innerHTML = '';
+    newsRendered = 0;
+    hide(newsFeed);
+    newsEmpty.textContent = (newsQuery || newsSource)
+      ? 'No articles match your search.'
+      : 'No news articles yet.';
+    show(newsEmpty);
+    return;
+  }
+
+  hide(newsEmpty);
+
+  // Only the tail needs drawing when appending to an unchanged list
+  if (!append || newsRendered > newsItems.length) {
+    newsFeed.innerHTML = '';
+    newsRendered = 0;
+  }
+  for (let i = newsRendered; i < newsItems.length; i++) {
+    newsFeed.appendChild(buildNewsCard(newsItems[i]));
+  }
+  newsRendered = newsItems.length;
+  show(newsFeed);
+}
+
+/** Draw the end-of-feed state once nothing else can be fetched. */
+function finishNews() {
+  if (!newsItems.length) {
+    hide(newsFooter);
+    return;
+  }
+  show(newsFooter);
+  newsMoreBtn.classList.toggle('hidden', !newsHasMore);
+  newsEnd.classList.toggle('hidden', newsHasMore);
+}
+
+/** Append the next page. Superseded requests are dropped by the generation check. */
+async function loadNewsMore() {
+  if (!newsHasMore) return;
+
+  const gen = ++newsGen;
+  newsBusy = true;
+  hide(newsEnd);
+  if (newsItems.length) show(newsFooter);
+  setBtnLoading(newsMoreBtn, true);
+
+  const { ok, status, data } = await fetchNewsPage();
+  if (gen !== newsGen) return;
+
+  newsBusy = false;
+  setBtnLoading(newsMoreBtn, false);
+  hide(newsLoading);
+
+  if (!ok) {
+    hide(newsFooter);
+    newsHasMore = false;
+    showError(newsError, status === 401
+      ? 'Session expired. Please re-login.'
+      : 'Could not load news. Please try again.');
+    return;
+  }
+
+  clearError(newsError);
+  buildNewsSourceOptions(data?.sources);
+
+  const articles = Array.isArray(data?.articles) ? data.articles : [];
+  newsItems.push(...articles);
+  newsOffset += articles.length;
+  newsHasMore = Boolean(data?.has_more);
+  newsReady   = true;
+
+  const updated = newsTimeAgo(data?.last_updated);
+  if (updated) {
+    newsUpdated.textContent = `Updated ${updated}`;
+    show(newsUpdated);
+  } else {
+    hide(newsUpdated);
+  }
+
+  renderNews({ append: true });
+  finishNews();
+}
+
+/** Reset the feed and load the first page. */
+async function loadNews() {
+  clearError(newsError);
+  newsItems    = [];
+  newsRendered = 0;
+  newsOffset   = 0;
+  newsHasMore  = true;   // let the first request through
+  newsReady    = false;
+  newsFeed.innerHTML = '';
+  hide(newsFeed);
+  hide(newsEmpty);
+  hide(newsFooter);
+  hide(newsEnd);
+  show(newsLoading);
+  await loadNewsMore();
+}
+
+/** One-line feedback for the source update (auto-hides once it succeeds). */
+function showNewsStatus(text, tone = 'ok') {
+  clearTimeout(newsStatusTimer);
+
+  if (!text) {
+    newsStatus.textContent = '';
+    hide(newsStatus);
+    return;
+  }
+
+  newsStatus.textContent = text;
+  newsStatus.classList.toggle('news-status--ok',      tone === 'ok');
+  newsStatus.classList.toggle('news-status--pending', tone === 'pending');
+  show(newsStatus);
+
+  if (tone === 'ok') {
+    newsStatusTimer = setTimeout(() => showNewsStatus(''), 8000);
+  }
+}
+
+/**
+ * /news/make re-crawls every source and rewrites the database, so it is only
+ * ever triggered by the user. The feed is re-read afterwards.
+ */
+async function makeNews() {
+  if (newsBusy) return;
+
+  clearError(newsError);
+  setBtnLoading(newsMakeBtn, true);
+  showNewsStatus('Collecting articles from all sources\u2026', 'pending');
+
+  let ok = false;
+  let message = '';
+  try {
+    const res = await fetch(`${API}/news/make`, {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${currentPassword}`,
+        'Content-Type':  'application/json',
+      },
+    });
+    const data = await res.json().catch(() => null);
+    ok      = res.ok && Boolean(data?.success);
+    message = data?.message || '';
+  } catch (_) {
+    ok = false;
+  }
+
+  setBtnLoading(newsMakeBtn, false);
+
+  if (!ok) {
+    showNewsStatus('');
+    showError(newsError, message || 'Could not update the news sources. Please try again.');
+    return;
+  }
+
+  showNewsStatus(message || 'News sources updated.');
+  await loadNews();
+}
+
+// News controls — search is debounced because it hits the API
+newsSearchIn.addEventListener('input', () => {
+  clearTimeout(newsSearchTimer);
+  newsSearchTimer = setTimeout(() => {
+    const next = newsSearchIn.value.trim();
+    if (next === newsQuery) return;
+    newsQuery = next;
+    loadNews();
+  }, 450);
+});
+
+newsSourceSel.addEventListener('change', () => {
+  newsSource = newsSourceSel.value;
+  loadNews();
+});
+
+newsRefreshBtn.addEventListener('click', async () => {
+  setBtnLoading(newsRefreshBtn, true);
+  await loadNews();
+  setBtnLoading(newsRefreshBtn, false);
+});
+
+newsMakeBtn.addEventListener('click', makeNews);
+
+newsMoreBtn.addEventListener('click', loadNewsMore);
+
+// Endless scrolling — pull the next page while the sentinel is near the viewport
+const newsObserver = new IntersectionObserver(entries => {
+  if (!entries.some(e => e.isIntersecting)) return;
+  if (!newsReady || newsBusy || !newsHasMore) return;
+  if (newsSection.classList.contains('hidden')) return;
+  loadNewsMore();
+}, { rootMargin: '400px 0px' });
+newsObserver.observe(newsSentinel);
 
 // ─────────────────────────────────────────────────────────────
 // Back to top
