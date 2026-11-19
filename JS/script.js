@@ -2268,6 +2268,12 @@ function buildTVDetailContent(d) {
     a.className = 'detail-ext-link'; a.textContent = 'Trakt';
     linksRow.appendChild(a);
   }
+  if (d.stremio_link) {
+    const a = document.createElement('a');
+    a.href = d.stremio_link; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Stremio';
+    linksRow.appendChild(a);
+  }
   if (linksRow.children.length) headline.appendChild(linksRow);
 
   hero.appendChild(headline);
