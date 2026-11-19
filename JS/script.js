@@ -1396,22 +1396,28 @@ function buildDetailContent(d) {
   // External links — Official Site, IMDb, TMDB
   const linksRow = document.createElement('div');
   linksRow.className = 'detail-links';
+  if (d.id) {
+    const a = document.createElement('a');
+    a.href = `https://www.themoviedb.org/movie/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'TMDB';
+    linksRow.appendChild(a);
+  }
   if (d.homepage) {
     const a = document.createElement('a');
     a.href = d.homepage; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'Official Site';
     linksRow.appendChild(a);
   }
+  if (d.trakt) {
+    const a = document.createElement('a');
+    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
+    linksRow.appendChild(a);
+  }
   if (d.imdb_id) {
     const a = document.createElement('a');
     a.href = `https://www.imdb.com/title/${d.imdb_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'IMDb';
-    linksRow.appendChild(a);
-  }
-  if (d.id) {
-    const a = document.createElement('a');
-    a.href = `https://www.themoviedb.org/movie/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.className = 'detail-ext-link'; a.textContent = 'TMDB';
     linksRow.appendChild(a);
   }
   if (d.wikidata_id) {
@@ -1424,12 +1430,6 @@ function buildDetailContent(d) {
     const a = document.createElement('a');
     a.href = d.disney_plus; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'Disney+';
-    linksRow.appendChild(a);
-  }
-  if (d.trakt) {
-    const a = document.createElement('a');
-    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
     linksRow.appendChild(a);
   }
   if (d.stremio_link) {
@@ -2220,10 +2220,22 @@ function buildTVDetailContent(d) {
   // External links
   const linksRow = document.createElement('div');
   linksRow.className = 'detail-links';
+  if (d.id) {
+    const a = document.createElement('a');
+    a.href = `https://www.themoviedb.org/tv/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'TMDB';
+    linksRow.appendChild(a);
+  }
   if (d.homepage) {
     const a = document.createElement('a');
     a.href = d.homepage; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'Official Site';
+    linksRow.appendChild(a);
+  }
+  if (d.trakt) {
+    const a = document.createElement('a');
+    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
     linksRow.appendChild(a);
   }
   if (d.imdb_id) {
@@ -2232,17 +2244,17 @@ function buildTVDetailContent(d) {
     a.className = 'detail-ext-link'; a.textContent = 'IMDb';
     linksRow.appendChild(a);
   }
-  if (d.id) {
-    const a = document.createElement('a');
-    a.href = `https://www.themoviedb.org/tv/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.className = 'detail-ext-link'; a.textContent = 'TMDB';
-    linksRow.appendChild(a);
-  }
   if (d.tvdb_id) {
     const a = document.createElement('a');
     a.href = `https://www.thetvdb.com/?tab=series&id=${d.tvdb_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'TVDB';
     linksRow.appendChild(a);
+    if (d.tvmaze_id) {
+      const a = document.createElement('a');
+      a.href = `https://www.tvmaze.com/shows/${d.tvmaze_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.className = 'detail-ext-link'; a.textContent = 'TVmaze';
+      linksRow.appendChild(a);
+    }
   }
   if (d.wikidata_id) {
     const a = document.createElement('a');
@@ -2250,22 +2262,10 @@ function buildTVDetailContent(d) {
     a.className = 'detail-ext-link'; a.textContent = 'Wikipedia';
     linksRow.appendChild(a);
   }
-  if (d.tvmaze_id) {
-    const a = document.createElement('a');
-    a.href = `https://www.tvmaze.com/shows/${d.tvmaze_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.className = 'detail-ext-link'; a.textContent = 'TVmaze';
-    linksRow.appendChild(a);
-  }
   if (d.disney_plus) {
     const a = document.createElement('a');
     a.href = d.disney_plus; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'Disney+';
-    linksRow.appendChild(a);
-  }
-  if (d.trakt) {
-    const a = document.createElement('a');
-    a.href = d.trakt; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.className = 'detail-ext-link'; a.textContent = 'Trakt';
     linksRow.appendChild(a);
   }
   if (d.stremio_link) {
