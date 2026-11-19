@@ -2249,12 +2249,12 @@ function buildTVDetailContent(d) {
     a.href = `https://www.thetvdb.com/?tab=series&id=${d.tvdb_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.className = 'detail-ext-link'; a.textContent = 'TVDB';
     linksRow.appendChild(a);
-    if (d.tvmaze_id) {
-      const a = document.createElement('a');
-      a.href = `https://www.tvmaze.com/shows/${d.tvmaze_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.className = 'detail-ext-link'; a.textContent = 'TVmaze';
-      linksRow.appendChild(a);
-    }
+  }
+  if (d.tvmaze_id) {
+    const a = document.createElement('a');
+    a.href = `https://www.tvmaze.com/shows/${d.tvmaze_id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'TVmaze';
+    linksRow.appendChild(a);
   }
   if (d.wikidata_id) {
     const a = document.createElement('a');
