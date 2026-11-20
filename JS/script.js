@@ -1455,6 +1455,7 @@ function buildDetailContent(d) {
     { label: 'Release Date', value: fmtDate(d.release_date) },
     { label: 'Status',       value: d.status },
     { label: 'Age Rating',   value: d.age_rating },
+    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
     { label: 'Studio',       value: d.production_companies?.[0]?.name },
     { label: 'Country',      value: d.origin_country?.length ? d.origin_country.map(fullRegion).join(', ') : null },
     { label: 'Language',     value: d.original_language ? fullLang(d.original_language) : null },
@@ -1893,34 +1894,38 @@ function buildScoresSection(d) {
   return sec;
 }
 
-/** A single previous/following tile. */
+/** A single previous/following poster card. */
 function buildNavTile(obj, label) {
   const tile = buildEntityLink(obj, 'detail-nav-tile');
   if (tmdbTargetOf(obj)) tile.classList.add('detail-nav-tile--linked');
 
-  if (obj.logo) {
-    tile.classList.add('has-logo');
-    const wrap = document.createElement('div');
-    wrap.className = 'detail-nav-logo-wrap';
+  // Poster wrap (2:3 aspect ratio)
+  const posterWrap = document.createElement('div');
+  posterWrap.className = 'detail-nav-poster-wrap';
 
-    const logo = document.createElement('img');
-    logo.className = 'detail-nav-logo';
-    logo.src = httpsUrl(obj.logo);
-    logo.alt = obj.name || '';
-    logo.loading = 'lazy';
-    logo.addEventListener('error', () => {
-      wrap.remove();
-      tile.classList.remove('has-logo');
-    });
-    wrap.appendChild(logo);
-    tile.appendChild(wrap);
+  if (obj.poster_path) {
+    const img = document.createElement('img');
+    img.src = `https://image.tmdb.org/t/p/w185${obj.poster_path}`;
+    img.alt = obj.name || '';
+    img.className = 'detail-nav-poster';
+    img.loading = 'lazy';
+    img.onerror = () => {
+      img.replaceWith(makePosterPlaceholder('detail-nav-poster-placeholder'));
+    };
+    posterWrap.appendChild(img);
+  } else {
+    posterWrap.appendChild(makePosterPlaceholder('detail-nav-poster-placeholder'));
   }
 
+  // Previous / Following pill overlaid on the poster
   const tag = document.createElement('span');
   tag.className = 'detail-nav-tag';
   tag.textContent = label;
-  tile.appendChild(tag);
+  posterWrap.appendChild(tag);
 
+  tile.appendChild(posterWrap);
+
+  // Title below the poster
   const name = document.createElement('span');
   name.className = 'detail-nav-name';
   name.textContent = obj.name || 'Untitled';
@@ -1933,7 +1938,7 @@ function buildNavTile(obj, label) {
 function buildNavPair(prev, next) {
   const tiles = [];
   if (prev?.name) tiles.push(buildNavTile(prev, 'Previous'));
-  if (next?.name) tiles.push(buildNavTile(next, 'Following'));
+  if (next?.name) tiles.push(buildNavTile(next, 'Next'));
   if (!tiles.length) return null;
 
   const row = document.createElement('div');
@@ -1948,27 +1953,35 @@ function buildNavPair(prev, next) {
  * place in a saga is together.
  */
 function buildSeriesFranchiseSection(d) {
-  const banner = [];
+  // Universe is now in the quick facts strip — skip it from the banner
   const seenNames = new Set();
+  if (d.universe?.name) seenNames.add(d.universe.name.toLowerCase());
 
-  if (d.universe?.name) {
-    banner.push({ ...d.universe, label: 'Part of the', type: 'universe' });
-    seenNames.add(d.universe.name.toLowerCase());
-  }
-  
+  // Work out if there is a main previous/next pair on the top-level object
+  const hasMainPair = !!(d.previous?.name || d.following?.name);
+
+  // Collect main_franchises. If a main pair exists, the first main franchise
+  // name becomes the heading for that pair instead of appearing in the banner.
   const mf = d.main_franchises;
   const mfList = Array.isArray(mf) ? mf : (mf ? [mf] : []);
+  let mainPairLabel = null;
+  const banner = [];
+
   mfList.forEach(item => {
-    if (item?.name && !seenNames.has(item.name.toLowerCase())) {
-      banner.push({ ...item, label: 'Main franchise:', type: 'franchise' });
-      seenNames.add(item.name.toLowerCase());
+    if (!item?.name) return;
+    const key = item.name.toLowerCase();
+    if (seenNames.has(key)) return;
+    seenNames.add(key);
+    if (hasMainPair && !mainPairLabel) {
+      mainPairLabel = { name: item.name, obj: item };
+    } else {
+      banner.push({ ...item, label: 'Main franchise:' });
     }
   });
 
   const mainSeriesPair = buildNavPair(d.previous, d.following);
   const franchises = (d.franchises || []).filter(f => {
     if (!f || (!f.name && !f.wiki_id)) return false;
-    // If it's a franchise with no prev/next, and its name is already in the banner, skip it
     if (!f.previous && !f.following && f.name && seenNames.has(f.name.toLowerCase())) return false;
     return true;
   });
@@ -1977,46 +1990,72 @@ function buildSeriesFranchiseSection(d) {
 
   const sec = detailSection('Series & Franchises');
 
+  // Collapsible toggle — expanded by default
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'btn btn-ghost detail-saga-toggle';
+  toggleBtn.textContent = 'Hide ▴';
+  let sagaExpanded = true;
+
+  const sagaBody = document.createElement('div');
+  sagaBody.className = 'detail-saga-body';
+
+  toggleBtn.addEventListener('click', () => {
+    sagaExpanded = !sagaExpanded;
+    sagaBody.classList.toggle('detail-saga-body--collapsed', !sagaExpanded);
+    toggleBtn.textContent = sagaExpanded ? 'Hide ▴' : 'Show ▾';
+  });
+
+  sec.appendChild(toggleBtn);
+  sec.appendChild(sagaBody);
+
+  // Text banner (main franchise with no pair)
   if (banner.length) {
     const row = document.createElement('div');
     row.className = 'detail-universe-row';
     banner.forEach(u => {
       const span = document.createElement('span');
       span.className = 'detail-universe-item';
-      
-      const label = document.createElement('span');
-      label.className = 'detail-universe-label';
-      label.textContent = `${u.label} `;
-      span.appendChild(label);
-
+      const labelEl = document.createElement('span');
+      labelEl.className = 'detail-universe-label';
+      labelEl.textContent = `${u.label} `;
+      span.appendChild(labelEl);
       const link = buildEntityLink(u, 'detail-universe-link');
       link.textContent = u.name;
       span.appendChild(link);
-      
       row.appendChild(span);
     });
-    sec.appendChild(row);
+    sagaBody.appendChild(row);
   }
 
+  // Main pair — wrapped in a franchise block, with main franchise name as heading if available
   if (mainSeriesPair) {
-    sec.appendChild(mainSeriesPair);
+    const block = document.createElement('div');
+    block.className = 'detail-franchise';
+    if (mainPairLabel) {
+      const head = document.createElement('div');
+      head.className = 'detail-franchise-head';
+      const nameEl = buildEntityLink(mainPairLabel.obj, 'detail-franchise-name');
+      nameEl.textContent = mainPairLabel.name;
+      head.appendChild(nameEl);
+      block.appendChild(head);
+    }
+    block.appendChild(mainSeriesPair);
+    sagaBody.appendChild(block);
   }
 
+  // Additional franchise blocks
   franchises.forEach(f => {
     const block = document.createElement('div');
     block.className = 'detail-franchise';
-
     const head = document.createElement('div');
     head.className = 'detail-franchise-head';
     const nameEl = buildEntityLink(f, 'detail-franchise-name');
     nameEl.textContent = f.name || 'Franchise';
     head.appendChild(nameEl);
     block.appendChild(head);
-
     const pair = buildNavPair(f.previous, f.following);
     if (pair) block.appendChild(pair);
-
-    sec.appendChild(block);
+    sagaBody.appendChild(block);
   });
 
   return sec;
@@ -2078,8 +2117,17 @@ function buildQuickFacts(facts) {
     label.className = 'detail-quickfact-label';
     label.textContent = f.label;
 
-    const value = document.createElement('span');
-    value.className = 'detail-quickfact-value';
+    let value;
+    if (f.wikiId) {
+      value = document.createElement('a');
+      value.href   = `https://www.wikidata.org/wiki/Special:GoToLinkedPage/enwiki/${encodeURIComponent(f.wikiId)}`;
+      value.target = '_blank';
+      value.rel    = 'noopener noreferrer';
+      value.className = 'detail-quickfact-value detail-quickfact-link';
+    } else {
+      value = document.createElement('span');
+      value.className = 'detail-quickfact-value';
+    }
     value.textContent = f.value;
 
     item.appendChild(label);
@@ -2313,6 +2361,7 @@ function buildTVDetailContent(d) {
     { label: 'Last Aired',   value: fmtDate(d.last_air_date) },
     { label: 'Next Episode', value: nextText, cls: 'detail-quickfact--next detail-quickfact--wide' },
     { label: 'Age Rating',   value: d.age_rating },
+    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
     { label: 'Studio',       value: d.production_companies?.[0]?.name },
     { label: 'Country',      value: d.origin_country?.length ? d.origin_country.map(fullRegion).join(', ') : null },
     { label: 'Language',     value: d.original_language ? fullLang(d.original_language) : null },
