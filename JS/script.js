@@ -1455,12 +1455,12 @@ function buildDetailContent(d) {
     { label: 'Release Date', value: fmtDate(d.release_date) },
     { label: 'Status',       value: d.status },
     { label: 'Age Rating',   value: d.age_rating },
-    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
     { label: 'Studio',       value: d.production_companies?.[0]?.name },
     { label: 'Country',      value: d.origin_country?.length ? d.origin_country.map(fullRegion).join(', ') : null },
     { label: 'Language',     value: d.original_language ? fullLang(d.original_language) : null },
     { label: 'Budget',       value: d.budget  > 0 ? `$${fmt(d.budget)}`  : null },
     { label: 'Revenue',      value: d.revenue > 0 ? `$${fmt(d.revenue)}` : null },
+    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
   ]);
   if (facts) body.appendChild(facts);
 
@@ -2357,26 +2357,20 @@ function buildTVDetailContent(d) {
     { label: 'Ep. Runtime',  value: rtVal ? `${rtVal}m / ep` : null },
     { label: 'Seasons',      value: d.number_of_seasons  > 0 ? String(d.number_of_seasons)  : null },
     { label: 'Episodes',     value: d.number_of_episodes > 0 ? String(d.number_of_episodes) : null },
+    { label: 'Total Runtime',   value: d.total_runtime },
     { label: 'First Aired',  value: fmtDate(d.release_date) },
     { label: 'Last Aired',   value: fmtDate(d.last_air_date) },
-    { label: 'Next Episode', value: nextText, cls: 'detail-quickfact--next detail-quickfact--wide' },
     { label: 'Age Rating',   value: d.age_rating },
-    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
     { label: 'Studio',       value: d.production_companies?.[0]?.name },
+    { label: 'Network',   value: d.network },
     { label: 'Country',      value: d.origin_country?.length ? d.origin_country.map(fullRegion).join(', ') : null },
     { label: 'Language',     value: d.original_language ? fullLang(d.original_language) : null },
     { label: 'Budget',       value: d.budget  > 0 ? `$${(d.budget).toLocaleString('en-US')}`  : null },
     { label: 'Revenue',      value: d.revenue > 0 ? `$${(d.revenue).toLocaleString('en-US')}` : null },
+    { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
+    { label: 'Next Episode', value: nextText, cls: 'detail-quickfact--next detail-quickfact--wide' },
   ]);
   if (facts) body.appendChild(facts);
-
-  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
-  const scoresSec = buildScoresSection(d);
-  if (scoresSec) body.appendChild(scoresSec);
-
-  // Series & Franchises — grouped together right after ratings
-  const sagaSec = buildSeriesFranchiseSection(d);
-  if (sagaSec) body.appendChild(sagaSec);
 
   // Based On — source works, linked to Wikidata
   const basedOnSec = buildBasedOnSection(d);
@@ -2391,57 +2385,8 @@ function buildTVDetailContent(d) {
     sec.appendChild(p);
     body.appendChild(sec);
   }
-
-  // Trailers / teasers — scrollable row
-  const tvVideosSec = buildVideosSection(d);
-  if (tvVideosSec) body.appendChild(tvVideosSec);
-
-  // Directors + Cast
-  const tvCastSec = buildCastDirectorsSection(d);
-  if (tvCastSec) body.appendChild(tvCastSec);
-
-  // Watch providers
-  if (d.watch_providers && Object.keys(d.watch_providers).length) {
-    const sec = detailSection('Where to Watch');
-    const countries = Object.keys(d.watch_providers);
-    const sorted = ['US', ...countries.filter(c => c !== 'US')];
-    sorted.forEach(cc => {
-      const pData = d.watch_providers[cc];
-      if (!pData) return;
-      const countryBlock = document.createElement('div');
-      countryBlock.className = 'detail-provider-country';
-      const countryLabel = document.createElement('div');
-      countryLabel.className = 'detail-provider-label';
-      countryLabel.textContent = fullRegion(cc);
-      countryBlock.appendChild(countryLabel);
-      ['flatrate', 'rent', 'buy'].forEach(type => {
-        if (!pData[type]?.length) return;
-        const typeLabel = document.createElement('span');
-        typeLabel.className = 'detail-provider-type';
-        typeLabel.textContent = type === 'flatrate' ? 'Stream' : type.charAt(0).toUpperCase() + type.slice(1);
-        countryBlock.appendChild(typeLabel);
-        const logoRow = document.createElement('div');
-        logoRow.className = 'detail-provider-logos';
-        [...pData[type]].sort((a,b) => (a.display_priority||0)-(b.display_priority||0)).forEach(p => {
-          const a = document.createElement('a');
-          a.href = pData.link || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = p.provider_name;
-          if (p.logo_path) {
-            const img = document.createElement('img');
-            img.src = `${TMDB_LOGO_BASE}${p.logo_path}`; img.alt = p.provider_name;
-            img.className = 'detail-provider-logo'; img.loading = 'lazy';
-            a.appendChild(img);
-          } else { a.textContent = p.provider_name; a.className += ' detail-provider-text'; }
-          logoRow.appendChild(a);
-        });
-        countryBlock.appendChild(logoRow);
-      });
-      sec.appendChild(countryBlock);
-    });
-    appendDetailCredit(sec, 'Where to Watch data from ', 'JustWatch', 'https://www.justwatch.com');
-    body.appendChild(sec);
-  }
-
-  // Episodes — grouped by season, cached, season selector pills
+  
+    // Episodes — grouped by season, cached, season selector pills
   if (d.episodes?.length) {
     const sec = detailSection('Episodes');
 
@@ -2505,6 +2450,67 @@ function buildTVDetailContent(d) {
 
     body.appendChild(sec);
   }
+
+  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
+  const scoresSec = buildScoresSection(d);
+  if (scoresSec) body.appendChild(scoresSec);
+
+  // Series & Franchises — grouped together right after ratings
+  const sagaSec = buildSeriesFranchiseSection(d);
+  if (sagaSec) body.appendChild(sagaSec);
+
+
+
+  // Trailers / teasers — scrollable row
+  const tvVideosSec = buildVideosSection(d);
+  if (tvVideosSec) body.appendChild(tvVideosSec);
+
+  // Directors + Cast
+  const tvCastSec = buildCastDirectorsSection(d);
+  if (tvCastSec) body.appendChild(tvCastSec);
+
+  // Watch providers
+  if (d.watch_providers && Object.keys(d.watch_providers).length) {
+    const sec = detailSection('Where to Watch');
+    const countries = Object.keys(d.watch_providers);
+    const sorted = ['US', ...countries.filter(c => c !== 'US')];
+    sorted.forEach(cc => {
+      const pData = d.watch_providers[cc];
+      if (!pData) return;
+      const countryBlock = document.createElement('div');
+      countryBlock.className = 'detail-provider-country';
+      const countryLabel = document.createElement('div');
+      countryLabel.className = 'detail-provider-label';
+      countryLabel.textContent = fullRegion(cc);
+      countryBlock.appendChild(countryLabel);
+      ['flatrate', 'rent', 'buy'].forEach(type => {
+        if (!pData[type]?.length) return;
+        const typeLabel = document.createElement('span');
+        typeLabel.className = 'detail-provider-type';
+        typeLabel.textContent = type === 'flatrate' ? 'Stream' : type.charAt(0).toUpperCase() + type.slice(1);
+        countryBlock.appendChild(typeLabel);
+        const logoRow = document.createElement('div');
+        logoRow.className = 'detail-provider-logos';
+        [...pData[type]].sort((a,b) => (a.display_priority||0)-(b.display_priority||0)).forEach(p => {
+          const a = document.createElement('a');
+          a.href = pData.link || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = p.provider_name;
+          if (p.logo_path) {
+            const img = document.createElement('img');
+            img.src = `${TMDB_LOGO_BASE}${p.logo_path}`; img.alt = p.provider_name;
+            img.className = 'detail-provider-logo'; img.loading = 'lazy';
+            a.appendChild(img);
+          } else { a.textContent = p.provider_name; a.className += ' detail-provider-text'; }
+          logoRow.appendChild(a);
+        });
+        countryBlock.appendChild(logoRow);
+      });
+      sec.appendChild(countryBlock);
+    });
+    appendDetailCredit(sec, 'Where to Watch data from ', 'JustWatch', 'https://www.justwatch.com');
+    body.appendChild(sec);
+  }
+
+
 
   // Keywords
   if (d.keywords?.length) {
