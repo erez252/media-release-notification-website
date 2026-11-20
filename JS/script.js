@@ -1464,14 +1464,6 @@ function buildDetailContent(d) {
   ]);
   if (facts) body.appendChild(facts);
 
-  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
-  const scoresSec = buildScoresSection(d);
-  if (scoresSec) body.appendChild(scoresSec);
-
-  // Series & Franchises — grouped together right after ratings
-  const sagaSec = buildSeriesFranchiseSection(d);
-  if (sagaSec) body.appendChild(sagaSec);
-
   // Based On — source works, linked to Wikidata
   const basedOnSec = buildBasedOnSection(d);
   if (basedOnSec) body.appendChild(basedOnSec);
@@ -1485,6 +1477,16 @@ function buildDetailContent(d) {
     sec.appendChild(p);
     body.appendChild(sec);
   }
+  
+  // Ratings — external scores (Metacritic, Rotten Tomatoes, …)
+  const scoresSec = buildScoresSection(d);
+  if (scoresSec) body.appendChild(scoresSec);
+
+  // Series & Franchises — grouped together right after ratings
+  const sagaSec = buildSeriesFranchiseSection(d);
+  if (sagaSec) body.appendChild(sagaSec);
+
+
 
   // Trailers / teasers — scrollable row
   const videosSec = buildVideosSection(d);
