@@ -141,7 +141,79 @@ document.querySelectorAll('.search-type-pills .pill').forEach(btn => {
 // ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
+function formatAirs(airs) {
+  if (!airs?.day || !airs?.time || !airs?.timezone) return null;
 
+  try {
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const targetDay = days.indexOf(airs.day);
+
+    if (targetDay === -1 || !/^([01]\d|2[0-3]):[0-5]\d$/.test(airs.time)) return null;
+
+    // Get the current date in the original timezone
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: airs.timezone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      weekday: 'long'
+    }).formatToParts(now);
+
+    const getPart = type => parts.find(p => p.type === type)?.value;
+
+    const year = Number(getPart('year'));
+    const month = Number(getPart('month'));
+    const day = Number(getPart('day'));
+    const currentDay = days.indexOf(getPart('weekday'));
+
+    // Find the next occurrence of the airing day
+    let daysUntil = (targetDay - currentDay + 7) % 7;
+
+    const [hours, minutes] = airs.time.split(':').map(Number);
+
+    // Find the actual airing date in the source timezone
+    const sourceDate = new Date(Date.UTC(year, month - 1, day + daysUntil, hours, minutes));
+
+    // Adjust for the source timezone
+    const getOffset = date => {
+      const formatted = new Intl.DateTimeFormat('en-US', {
+        timeZone: airs.timezone,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hourCycle: 'h23'
+      }).formatToParts(date);
+
+      const values = Object.fromEntries(formatted.map(p => [p.type, p.value]));
+
+      return Date.UTC(
+        Number(values.year), Number(values.month) - 1, Number(values.day),
+        Number(values.hour), Number(values.minute)
+      ) - date.getTime();
+    };
+
+    let timestamp = sourceDate.getTime() - getOffset(sourceDate);
+    timestamp -= getOffset(new Date(timestamp)) - getOffset(sourceDate);
+
+    const converted = new Date(timestamp);
+
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: userTimezone,
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).format(converted).replace(',', ' at');
+
+  } catch {
+    return null;
+  }
+}
 /** Show/hide the built-in loading spinner inside a button */
 function setBtnLoading(btn, loading) {
   const text    = btn.querySelector('.btn-text');
@@ -1396,6 +1468,12 @@ function buildDetailContent(d) {
   // External links — Official Site, IMDb, TMDB
   const linksRow = document.createElement('div');
   linksRow.className = 'detail-links';
+  if (d.imdb_id) {
+    const a = document.createElement('a');
+    a.href = `https://www.imdb.com/title/${d.imdb_id}/parentalguide/`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Parents guide';
+    linksRow.appendChild(a);
+  }
   if (d.id) {
     const a = document.createElement('a');
     a.href = `https://www.themoviedb.org/movie/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -1461,6 +1539,7 @@ function buildDetailContent(d) {
     { label: 'Budget',       value: d.budget  > 0 ? `$${fmt(d.budget)}`  : null },
     { label: 'Revenue',      value: d.revenue > 0 ? `$${fmt(d.revenue)}` : null },
     { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
+    { label: 'Franchise',value: d.main_franchises?.[0]?.name && !d.previous && !d.following? d.main_franchises[0].name: null,wikiId: d.main_franchises?.[0]?.wiki_id || d.main_franchises?.[0]?.wikidata_id || null},
   ]);
   if (facts) body.appendChild(facts);
 
@@ -1976,9 +2055,10 @@ function buildSeriesFranchiseSection(d) {
     seenNames.add(key);
     if (hasMainPair && !mainPairLabel) {
       mainPairLabel = { name: item.name, obj: item };
-    } else {
-      banner.push({ ...item, label: 'Main franchise:' });
-    }
+    } 
+    // else {
+    //   banner.push({ ...item, label: 'Main franchise:' });
+    // }
   });
 
   const mainSeriesPair = buildNavPair(d.previous, d.following);
@@ -2270,6 +2350,12 @@ function buildTVDetailContent(d) {
   // External links
   const linksRow = document.createElement('div');
   linksRow.className = 'detail-links';
+  if (d.imdb_id) {
+    const a = document.createElement('a');
+    a.href = `https://www.imdb.com/title/${d.imdb_id}/parentalguide/`; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'detail-ext-link'; a.textContent = 'Parents guide';
+    linksRow.appendChild(a);
+  }
   if (d.id) {
     const a = document.createElement('a');
     a.href = `https://www.themoviedb.org/tv/${d.id}`; a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -2352,10 +2438,11 @@ function buildTVDetailContent(d) {
   } else if (d.next_air_date) {
     nextText = `▶ Next episode ${fmtDate(d.next_air_date)}`;
   }
-
+  const airsStr = formatAirs(d.airs);
   const facts = buildQuickFacts([
     { label: 'Score',        value: d.vote_average ? `★ ${d.vote_average.toFixed(1)}` + (d.vote_count ? ` (${(d.vote_count).toLocaleString('en-US')} votes)` : '') : null, cls: 'detail-quickfact--score' },
     { label: 'Status',       value: d.status },
+    { label: 'Ending',       value: d.ending },
     { label: 'Ep. Runtime',  value: rtVal ? `${rtVal}m / ep` : null },
     { label: 'Seasons',      value: d.number_of_seasons  > 0 ? String(d.number_of_seasons)  : null },
     { label: 'Episodes',     value: d.number_of_episodes > 0 ? String(d.number_of_episodes) : null },
@@ -2370,6 +2457,8 @@ function buildTVDetailContent(d) {
     { label: 'Budget',       value: d.budget  > 0 ? `$${(d.budget).toLocaleString('en-US')}`  : null },
     { label: 'Revenue',      value: d.revenue > 0 ? `$${(d.revenue).toLocaleString('en-US')}` : null },
     { label: 'Universe',     value: d.universe?.name || null, wikiId: d.universe?.wiki_id || d.universe?.wikidata_id || null },
+    { label: 'Franchise',value: d.main_franchises?.[0]?.name && !d.previous && !d.following? d.main_franchises[0].name: null,wikiId: d.main_franchises?.[0]?.wiki_id || d.main_franchises?.[0]?.wikidata_id || null},
+    { label: 'Airs', value: airsStr },
     { label: 'Next Episode', value: nextText, cls: 'detail-quickfact--next detail-quickfact--wide' },
   ]);
   if (facts) body.appendChild(facts);
